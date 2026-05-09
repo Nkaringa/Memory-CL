@@ -119,6 +119,14 @@ services:
     depends_on:
       api: { condition: service_healthy }
     command: ["sleep", "infinity"]
+    # The worker reuses the api image, which carries a HEALTHCHECK that
+    # curls http://localhost:8000/health/live. The worker process here
+    # is `sleep infinity` — there's no API listening inside it, so the
+    # inherited healthcheck always fails and docker reports it as
+    # unhealthy even though it's doing exactly what it should. Disable
+    # the inherited probe so the container's status reflects reality.
+    healthcheck:
+      disable: true
     read_only: true
     tmpfs:
       - /tmp
@@ -150,12 +158,16 @@ services:
     container_name: memory-cl-qdrant-prod
     volumes:
       - qdrant-prod-data:/qdrant/storage
+    # NOTE: Qdrant ships a busybox-based slim image that lacks `curl`,
+    # `wget`, and `/dev/tcp` shell features — there's no clean
+    # in-container HTTP probe. The api uses
+    # `depends_on: qdrant: condition: service_started` (not
+    # `service_healthy`), so a healthcheck here doesn't gate anything.
+    # /health/ready directly pings qdrant from the api side, which is
+    # the authoritative readiness signal. Disable the docker-level
+    # healthcheck so `docker ps` doesn't falsely report unhealthy.
     healthcheck:
-      # Qdrant slim images don't ship curl — TCP probe via /bin/sh.
-      test: ["CMD-SHELL", "/bin/sh -c 'exec 3<>/dev/tcp/127.0.0.1/6333 && echo -e \"GET /readyz HTTP/1.0\\r\\n\\r\\n\" >&3 && head -1 <&3 | grep -q \"200\\|204\"'"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      disable: true
     restart: unless-stopped
 
   neo4j:
