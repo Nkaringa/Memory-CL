@@ -60,14 +60,14 @@ services:
     cap_drop:
       - ALL
     restart: unless-stopped
-    deploy:
-      replicas: 2
-      update_config:
-        parallelism: 1
-        order: start-first
-      restart_policy:
-        condition: on-failure
-        max_attempts: 5
+    # NOTE on scaling: a `deploy: replicas: N` block was REMOVED here.
+    # Compose refuses `replicas: N` together with a fixed `container_name`,
+    # and the `ports: 8000:8000` mapping below would collide between
+    # replicas on the same host anyway. For Swarm / Kubernetes deploys
+    # where replicas truly help, remove `container_name` and `ports`,
+    # then use a `deploy:` block with the desired replicas + update
+    # strategy. On a single-host homelab the `restart: unless-stopped`
+    # policy above is already the right reliability mechanism.
 
   # --- UI -----------------------------------------------------------------
   ui:

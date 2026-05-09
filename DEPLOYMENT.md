@@ -113,7 +113,7 @@ The compose file brings up:
 
 | Service | Image | Role |
 |---|---|---|
-| `api` | `memory-cl:prod` | FastAPI (2 replicas, rolling update) |
+| `api` | `memory-cl:prod` | FastAPI (single instance; `restart: unless-stopped`) |
 | `ui` | `memory-cl-ui:prod` | Next.js standalone UI |
 | `worker` | `memory-cl:prod` (different ENTRYPOINT) | Async worker pool |
 | `postgres` | `postgres:16-alpine` | Metadata + ingestion units |
@@ -174,7 +174,17 @@ integrity) flag degradation but never gate traffic.
 
 ## 6. Rolling updates
 
-`docker-compose.production.yml` declares:
+The shipped `docker-compose.production.yml` runs **one** API
+container with `restart: unless-stopped`. That's the right shape for
+a single-host homelab — `replicas: 2` on one host adds no
+availability (single point of failure remains the host) and creates
+a `ports: 8000:8000` collision between the two replicas.
+
+For real rolling updates you need a multi-host orchestrator. Two
+options:
+
+**Docker Swarm** — drop `container_name` and the static `ports`
+binding from the compose file, then add a `deploy:` block:
 
 ```yaml
 deploy:
@@ -192,7 +202,7 @@ probe **before** the old replica is drained — combined with the
 boot health gate, this means a broken release never reaches steady
 state with zero healthy replicas.
 
-For Kubernetes deployments, replicate this with:
+**Kubernetes** — equivalent shape:
 
 ```yaml
 strategy:
