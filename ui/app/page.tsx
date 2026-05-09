@@ -51,7 +51,7 @@ export default function HomePage() {
           and how the system decided it.
         </h1>
         <p className="mt-4 max-w-2xl text-sm text-muted leading-relaxed">
-          Phases 1–9 ship a deterministic AI memory engine. This UI is the
+          Memory-CL ships a deterministic AI memory engine. This UI is the
           cognitive interface over it — every page exposes the underlying
           modules, scores, and pipeline trace so an engineer can reason about
           the answer, not just consume it.
@@ -74,7 +74,7 @@ export default function HomePage() {
         </h2>
         <div className="grid sm:grid-cols-2 gap-4">
           {PILLARS.map(({ title, body, Icon, href }) => (
-            <Link key={href} href={href} className="group block">
+            <Link key={href} href={href as never} className="group block">
               <Card className="transition-colors group-hover:border-accent/50">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
