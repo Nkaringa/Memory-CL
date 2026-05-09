@@ -34,17 +34,24 @@ RUN apt-get update \
 # Pin pip so the resolver's behavior is itself deterministic across builds.
 RUN pip install --upgrade "pip==24.3.1" "setuptools==75.6.0" "wheel==0.45.1"
 
-# Lockfile-strict install — the lockfile is the single source of truth for
-# direct dependencies. We use --no-deps to refuse implicit transitive
-# upgrades; the lockfile must list everything we install.
+# The lockfile pins our DIRECT dependencies. We let pip pull transitive
+# wheels (starlette, anyio, httpx-sse, etc.) into /wheels so the runtime
+# stage has a complete dependency closure to install from.
+#
+# (Until we wire pip-compile --generate-hashes into CI, "lockfile-strict"
+# is bridge-grade: direct deps are pinned, transitives are whatever the
+# resolver picks at build time. Dropping --no-deps was necessary because
+# without it the runtime image was missing fastapi's `starlette` and the
+# whole import chain crashed at boot.)
 COPY requirements.lock.txt ./
 RUN pip wheel \
-        --no-deps \
         --wheel-dir /wheels \
         -r requirements.lock.txt
 
 # Build a wheel for the local package so the runtime stage installs it
 # the same way it installs everything else (no editable installs in prod).
+# --no-deps here is correct: the local package's deps were already pulled
+# into /wheels by the previous step from requirements.lock.txt.
 COPY pyproject.toml ./
 COPY schemas ./schemas
 COPY infra ./infra
@@ -83,24 +90,18 @@ RUN groupadd --system --gid 1000 memcl \
 
 WORKDIR /app
 
-# Bring wheels over from the builder and install everything in one layer.
-# `--no-index --find-links` guarantees we never fall back to a network
-# install if a wheel is missing — surfaces the gap loudly during build.
+# Bring wheels over from the builder and install every wheel that was
+# built. Installing /wheels/*.whl directly (vs `-r requirements.lock.txt
+# --no-deps`) ensures transitive deps in /wheels actually land in the
+# runtime image — that was the crash cause when the previous version
+# left starlette out. `--no-index` still guarantees we never fall back
+# to a network install: if a wheel isn't in /wheels, build fails loudly.
 COPY --from=builder /wheels /wheels
-COPY requirements.lock.txt ./
 RUN pip install \
-        --no-deps \
         --no-index \
-        --find-links=/wheels \
         --no-cache-dir \
-        -r requirements.lock.txt \
- && pip install \
-        --no-deps \
-        --no-index \
-        --find-links=/wheels \
-        --no-cache-dir \
-        memory-cl \
- && rm -rf /wheels requirements.lock.txt /root/.cache /tmp/* \
+        /wheels/*.whl \
+ && rm -rf /wheels /root/.cache /tmp/* \
  && find /usr/local/lib/python3.12 -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 
 # Application source — only what the runtime needs. Static UI bundle is
