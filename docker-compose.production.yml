@@ -41,6 +41,15 @@ services:
       OTEL_SERVICE_NAME: memory-cl-api
     ports:
       - "8000:8000"
+    volumes:
+      # Bind-mount a host directory where target codebases live. The
+      # ingestion pipeline walks `repo_path` from inside the api
+      # container — without this mount it has nothing to walk.
+      #
+      # Drop repos on the VM at /home/memcl/repos/<name>, then ingest
+      # with `memcl ingest /repos/<name> --repo-id <name>`. Read-only
+      # so the api can never accidentally mutate source.
+      - ${MEMCL_REPOS_HOST_DIR:-/home/memcl/repos}:/repos:ro
     depends_on:
       postgres: { condition: service_healthy }
       qdrant:   { condition: service_started }
