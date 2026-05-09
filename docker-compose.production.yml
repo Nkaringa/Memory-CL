@@ -1,0 +1,193 @@
+# ============================================================================
+# Memory-CL — production compose stack (Phase 10 hardened)
+# ----------------------------------------------------------------------------
+# Brings up the full read-only-from-the-internet shape:
+#
+#     ui ──▶ api ──▶ postgres + neo4j + qdrant + redis
+#              ─▶ audit JSONL sink (host volume)
+#
+# One command:
+#     docker compose -f docker-compose.production.yml up -d
+#
+# Requires real values for the secrets in .env.production. The
+# `${VAR:?required}` guards below fail the `up` loudly if anything is
+# missing instead of starting a half-configured stack.
+# ============================================================================
+
+services:
+
+  # --- API ----------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    image: memory-cl:prod
+    container_name: memory-cl-api
+    env_file:
+      - .env.production
+    environment:
+      ENVIRONMENT: production
+      LOG_FORMAT: json
+      OTEL_ENABLED: "true"
+      STRICT_BOOTSTRAP: "true"
+      POSTGRES_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?required}@postgres:5432/memory
+      QDRANT_URL: http://qdrant:6333
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?required}
+      REDIS_URL: redis://redis:6379/0
+      MCP_API_KEY: ${MCP_API_KEY:?required}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: memory-cl-api
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      qdrant:   { condition: service_started }
+      neo4j:    { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=4).status==200 else sys.exit(1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        max_attempts: 5
+
+  # --- UI -----------------------------------------------------------------
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile.production
+    image: memory-cl-ui:prod
+    container_name: memory-cl-ui
+    environment:
+      NODE_ENV: production
+      MEMORY_CL_BACKEND_URL: http://api:8000
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "3000:3000"
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  # --- Worker -------------------------------------------------------------
+  # Same image, different command. Phase 7 workers consume from the
+  # queue; here we just sleep — the worker shape is provisioned, the
+  # orchestrator script is the operator extension point.
+  worker:
+    image: memory-cl:prod
+    container_name: memory-cl-worker
+    env_file: [.env.production]
+    environment:
+      ENVIRONMENT: production
+      ROLE: worker
+      POSTGRES_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?required}@postgres:5432/memory
+      QDRANT_URL: http://qdrant:6333
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?required}
+      REDIS_URL: redis://redis:6379/0
+      MCP_API_KEY: ${MCP_API_KEY:?required}
+    depends_on:
+      api: { condition: service_healthy }
+    command: ["sleep", "infinity"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  # --- Storage ------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: memory-cl-postgres-prod
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: memory
+    volumes:
+      - postgres-prod-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d memory"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.11.0
+    container_name: memory-cl-qdrant-prod
+    volumes:
+      - qdrant-prod-data:/qdrant/storage
+    healthcheck:
+      # Qdrant slim images don't ship curl — TCP probe via /bin/sh.
+      test: ["CMD-SHELL", "/bin/sh -c 'exec 3<>/dev/tcp/127.0.0.1/6333 && echo -e \"GET /readyz HTTP/1.0\\r\\n\\r\\n\" >&3 && head -1 <&3 | grep -q \"200\\|204\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5.22-community
+    container_name: memory-cl-neo4j-prod
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?required}
+      NEO4J_server_memory_heap_initial__size: 512M
+      NEO4J_server_memory_heap_max__size: 1G
+    volumes:
+      - neo4j-prod-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: memory-cl-redis-prod
+    volumes:
+      - redis-prod-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres-prod-data:
+  qdrant-prod-data:
+  neo4j-prod-data:
+  redis-prod-data:

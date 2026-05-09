@@ -1,0 +1,204 @@
+# 26 · Glossary
+
+← back to [index](00_INDEX.md)
+
+Single source of truth for vocabulary. If a term in the code or docs
+isn't defined here, please add it.
+
+---
+
+### Audit chain
+Append-only, hash-linked log of every governance / MCP / policy
+decision. Each entry's `hash = SHA256(prev_hash || canonical_json(payload))`.
+See [16](16_AUDIT_AND_GOVERNANCE.md).
+
+### `audit_event`
+The mandated structured-log shape for every chain entry. Fields:
+`event, phase=phase_8, actor, action, entity_id, before_hash,
+after_hash, tenant_id, timestamp, metadata`.
+
+### Backpressure
+The Phase-7 throttling controller that escalates from no-throttle →
+ingestion → +retrieval → +MCP. **Never throttles the graph layer.**
+See [14](14_DISTRIBUTED_SYSTEM.md).
+
+### BFS (graph)
+Breadth-first search via `GraphRetriever`. Visit-on-pop semantics;
+sorted seeds + sorted neighbors → deterministic candidate order.
+
+### Boot sequence
+Phase-9's deterministic 8-stage health gate: storage → schema → graph
++ vector → ingestion → retrieval → MCP → audit → API exposure.
+See [21](21_DEPLOYMENT.md).
+
+### Canonical JSON
+`json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`.
+Used for hashing, audit chain entries, dense records, snapshot IDs.
+
+### Channel (retrieval)
+One of `vector | graph | metadata`. Each is a `core/retrieval/*_retriever.py`
+module. Results from all three are fused per `unit_id` before ranking.
+
+### Checksum
+SHA-256 over a unit's `content` (`source_sha`) or over a versioned
+schema's content fields (`compute_checksum()`). Used by Phase-8
+`ChecksumVerifier` to detect on-disk corruption.
+
+### Compaction
+Phase-6 lifecycle decision to fold low-priority units into a per-module
+`DenseModule` summary (memory) or merge low-centrality leaves into a
+module aggregate (graph). **Plan only** — never destructive.
+
+### `ContextEntry` / `ContextEntryType`
+The atom of a `ContextPacket`. Type ∈
+`constraint | risk | architecture | logic | code` (priority order).
+
+### `ContextPacket`
+The mandated retrieval output per RETRIEVAL_SYSTEM_SPEC. Carries
+`task, context, risks, constraints, changes, confidence`.
+
+### Dense notation
+The Phase-3 token-optimized JSON format for module / API / graph-slice
+summaries. Max key length 5 chars, sorted, drop-empty serializer.
+
+### `DenseEncoder` / `DenseRecord`
+The Phase-3 dense projection of an `IngestionUnit` per the `t / id /
+dep / api / risk / file / evt` schema.
+
+### Dependency direction
+The architecture rule: `apps → core → storage → schemas`. Reverse
+imports are forbidden. See [02](02_ARCHITECTURE.md).
+
+### Determinism
+Same input + same state → byte-identical output. The primary
+invariant. See [25](25_DESIGN_DECISIONS.md) D-1.
+
+### Drift
+Phase-8 `EmbeddingDriftDetector` outputs three classes: embedding
+cosine shift, ranking Jaccard distance, cross-shard graph
+divergence. Severity bands: `LOW / MEDIUM / HIGH / CRITICAL`.
+
+### EDGE_RULES
+The (`src_kind`, `edge_kind`, allowed_dst_kinds) table in
+`schemas/graph.py`. Every edge passes `is_edge_allowed()` before
+write. See [11](11_GRAPH_SYSTEM.md).
+
+### EXTERNAL (node)
+`NodeKind.EXTERNAL`. Materialized for unresolved imports / calls /
+bases. Skipped by retrieval, dimmed in the UI, surfaced by
+`get_risks`. See [11](11_GRAPH_SYSTEM.md).
+
+### Feature weights
+The mandated Phase-4 ranking constants:
+`semantic=0.35 / graph=0.25 / recency=0.20 / importance=0.15 / feedback=0.05`.
+Sum must equal 1.0. See [10](10_RANKING_ENGINE.md).
+
+### Hybrid retrieval
+Phase-4's parallel fan-out across the three channels with failure
+isolation. See [09](09_RETRIEVAL_SYSTEM.md).
+
+### Ingestion
+Phase-2 pipeline: walk → parse → graph build → write to Postgres +
+Neo4j + Qdrant. See [03](03_DATA_FLOW.md).
+
+### `IngestionUnit`
+The atomic AST extraction output. One per
+module / class / function / method / constant. Identified by a
+deterministic `unit_id`. See [11](11_GRAPH_SYSTEM.md).
+
+### Lifespan
+The FastAPI startup/shutdown context manager
+(`apps/api/lifespan.py`). Runs the boot sequence + wires
+`AppState`.
+
+### MCP (Model Context Protocol)
+The Phase-5 agent surface. Seven mandated tools, hash-chained
+audit, in-band errors. See [08](08_MCP_TOOLING.md).
+
+### `MCP_API_KEY`
+The shared secret gating `POST /mcp/tools/{name}`. Required in
+production. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
+
+### `memcl`
+The Phase-9 console-script CLI. Six subcommands, JSON stdout,
+deterministic. See [19](19_CLI_REFERENCE.md).
+
+### `node_id`
+A graph node's primary key. Equal to `unit_id` for non-EXTERNAL
+nodes. EXTERNAL nodes use `external:<qname>`. See [11](11_GRAPH_SYSTEM.md).
+
+### Phase
+A discrete vertical slice of the engine. Phases 1–10 stack additively;
+each ends with a green test gate.
+
+### `point_id`
+A Qdrant point's primary key. Always equals the unit's `unit_id`.
+See [12](12_EMBEDDINGS_AND_COMPRESSION.md).
+
+### Policy engine
+Phase-8's deterministic rules engine. Predicates return `ALLOW |
+DENY | NEUTRAL`; first non-NEUTRAL wins. See [16](16_AUDIT_AND_GOVERNANCE.md).
+
+### Quarantine
+Soft-flag (Redis) marking a unit as suspect. Set by Phase-8
+checksum failures. Never deletes the unit. See [16](16_AUDIT_AND_GOVERNANCE.md).
+
+### Ranking
+Phase-4 module that converts fused candidates into a sorted
+`RankedResult` list using the mandated formula. See [10](10_RANKING_ENGINE.md).
+
+### `RelevanceScore`
+Phase-6 lifecycle score: `0.4·usage + 0.3·recency + 0.2·centrality
++ 0.1·success`. Drives decay / refresh decisions. See [13](13_MEMORY_EVOLUTION.md).
+
+### Repo (`repo_id`)
+A multi-tenant scoping key. Every unit, edge, and vector point
+carries it. Sharding is per-repo.
+
+### `request_id`
+A 16-hex-char identifier per MCP call. Surfaces in audit + logs +
+spans for end-to-end tracing.
+
+### Safe mode
+Process-wide read-only flag controlled by
+`core.safety.safe_mode.SafeModeController`. Engaged automatically on
+boot failure under `STRICT_BOOTSTRAP=true`.
+
+### `SCHEMA_VERSION`
+Global string in `schemas/base.py`. Bump only via a real schema
+migration. See [25](25_DESIGN_DECISIONS.md) D-11.
+
+### Shard
+A logical partition keyed by `repo_id`. Graph + vector routers use
+the same hash so per-repo data co-locates. See [14](14_DISTRIBUTED_SYSTEM.md).
+
+### Snapshot
+Phase-8 content-hashed bundle of `(graph + embeddings + retrieval
+config + schema version + MCP registry + state token)`. Same inputs
+→ same `snapshot_id`. See [17](17_SNAPSHOT_AND_REPLAY.md).
+
+### `source_sha`
+SHA-256 of an `IngestionUnit.content`. Drives the
+`ON CONFLICT WHERE source_sha differs` upsert guard.
+
+### Tenant
+The first-class ownership scope for repos. `TenantManager` enforces
+single-owner-per-repo. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
+
+### `unit_id`
+A unit's logical identity:
+`SHA256(repo_id ⊕ file_path ⊕ qualified_name)`. Equal across all
+three stores. See [11](11_GRAPH_SYSTEM.md).
+
+### Version token
+Monotonic per-tenant counter (`v0`, `v1`, …) used by Phase-7
+retrieval cache invalidation and Phase-8 snapshot identity.
+See [17](17_SNAPSHOT_AND_REPLAY.md).
+
+### Worker pool
+Phase-7 bounded asyncio executor with deterministic exponential
+backoff retry. See [14](14_DISTRIBUTED_SYSTEM.md).
+
+---
+
+← back to [index](00_INDEX.md)

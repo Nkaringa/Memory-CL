@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Memory-CL · inspector</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/ui/static/app.css">
+</head>
+<body>
+  <header>
+    <h1>Memory-CL · inspector</h1>
+    <span id="status-pill" class="pill pill-unknown">status: …</span>
+  </header>
+
+  <nav>
+    <button data-tab="retrieval" class="tab active">Retrieval</button>
+    <button data-tab="graph" class="tab">Graph</button>
+    <button data-tab="ingestion" class="tab">Ingestion</button>
+    <button data-tab="snapshots" class="tab">Snapshots</button>
+    <button data-tab="audit" class="tab">Audit</button>
+  </nav>
+
+  <main>
+
+    <!-- ============ Retrieval inspector ============ -->
+    <section id="tab-retrieval" class="tab-panel active">
+      <h2>Retrieval inspector</h2>
+      <form id="form-retrieval">
+        <label>repo_id <input name="repo_id" required></label>
+        <label>query <input name="text" required size="40"></label>
+        <label>top_k <input name="top_k" type="number" value="5" min="1" max="50"></label>
+        <button type="submit">Run /retrieve</button>
+      </form>
+      <pre id="out-retrieval" class="out">—</pre>
+    </section>
+
+    <!-- ============ Graph viewer ============ -->
+    <section id="tab-graph" class="tab-panel">
+      <h2>Graph viewer</h2>
+      <form id="form-graph">
+        <label>repo_id <input name="repo_id" required></label>
+        <label>node <input name="node" required size="40"
+               placeholder="qualified_name or unit_id"></label>
+        <label>depth <input name="depth" type="number" value="1" min="1" max="5"></label>
+        <button type="submit">Run query_graph</button>
+      </form>
+      <pre id="out-graph" class="out">—</pre>
+    </section>
+
+    <!-- ============ Ingestion status ============ -->
+    <section id="tab-ingestion" class="tab-panel">
+      <h2>Ingestion status</h2>
+      <p class="hint">Phase-9 UI is read-only — to ingest, use <code>memcl ingest</code>.</p>
+      <button id="btn-ingestion-status">Refresh /status</button>
+      <pre id="out-ingestion" class="out">—</pre>
+    </section>
+
+    <!-- ============ Snapshot comparison ============ -->
+    <section id="tab-snapshots" class="tab-panel">
+      <h2>Snapshot comparison</h2>
+      <form id="form-snapshot">
+        <label>tenant_id <input name="tenant_id" required></label>
+        <button type="submit">Build snapshot</button>
+      </form>
+      <div class="snapshot-pair">
+        <pre id="out-snapshot-a" class="out">A: —</pre>
+        <pre id="out-snapshot-b" class="out">B: —</pre>
+      </div>
+      <p id="snapshot-diff" class="hint">build twice to compare</p>
+    </section>
+
+    <!-- ============ Audit log viewer ============ -->
+    <section id="tab-audit" class="tab-panel">
+      <h2>Audit log viewer</h2>
+      <button id="btn-audit-tail">Fetch /audit/tail</button>
+      <button id="btn-audit-verify">Verify chain</button>
+      <pre id="out-audit" class="out">—</pre>
+    </section>
+  </main>
+
+  <footer>
+    <small>Memory-CL · Phase-9 inspector · read-only</small>
+  </footer>
+
+  <script src="/ui/static/app.js"></script>
+</body>
+</html>

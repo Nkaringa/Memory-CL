@@ -1,0 +1,53 @@
+# ============================================================================
+# Memory-CL — production lockfile
+# ============================================================================
+#
+# This file pins every direct dependency to an exact version. The
+# Dockerfile.production builder stage installs from this file so that
+# two `docker build` invocations on the same git sha produce wheels
+# that are bit-identical (modulo PyPI availability).
+#
+# DO NOT edit by hand without running:
+#     pip install pip-tools==7.4.1
+#     pip-compile --generate-hashes \
+#         --output-file=requirements.lock.txt \
+#         pyproject.toml
+#
+# Hash-pinned reproducibility is the next strict step; this lockfile
+# is the bridge until pip-compile is wired into CI. The exact version
+# pins below are sufficient to make the runtime image deterministic
+# given a stable PyPI mirror.
+# ============================================================================
+
+# --- API surface -----------------------------------------------------------
+fastapi==0.115.5
+uvicorn[standard]==0.32.0
+httpx==0.27.2
+
+# --- Validation + settings -------------------------------------------------
+pydantic==2.9.2
+pydantic-settings==2.6.1
+
+# --- Storage clients -------------------------------------------------------
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+qdrant-client==1.12.0
+neo4j==5.27.0
+redis==5.2.0
+
+# --- Repo walking ----------------------------------------------------------
+pathspec==0.12.1
+
+# --- Observability ---------------------------------------------------------
+structlog==24.4.0
+opentelemetry-api==1.27.0
+opentelemetry-sdk==1.27.0
+opentelemetry-instrumentation-fastapi==0.48b0
+opentelemetry-exporter-otlp==1.27.0
+
+# --- Native MCP server (Phase-11) ------------------------------------------
+# Official Model Context Protocol Python SDK. Provides the high-level
+# Server, in-process client utilities, and the SSE + streamable-HTTP
+# transport mountables used by apps/mcp/native_*.
+mcp==1.10.1
+sse-starlette==2.1.3

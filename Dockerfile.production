@@ -1,0 +1,129 @@
+# syntax=docker/dockerfile:1.7
+# ============================================================================
+# Memory-CL — production image (Phase 10 hardened)
+# ----------------------------------------------------------------------------
+# Goals:
+#   - reproducible builds (pinned lockfile, pinned base, --no-deps install)
+#   - smallest practical runtime (slim base, no compilers in final stage)
+#   - non-root user (uid 1000) by default
+#   - no secrets baked in
+#   - health probe via stdlib python (no curl in runtime)
+# ============================================================================
+
+# --- builder stage ----------------------------------------------------------
+# We use slim-bookworm because qdrant-client + asyncpg + neo4j ship pre-built
+# wheels for it; alpine would force source builds. This stage carries gcc
+# only because some transitives (e.g. asyncpg, certain greenlet builds) may
+# need it; the runtime stage drops everything except python itself.
+FROM python:3.12.7-slim-bookworm AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore
+
+WORKDIR /build
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        gcc \
+        ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Pin pip so the resolver's behavior is itself deterministic across builds.
+RUN pip install --upgrade "pip==24.3.1" "setuptools==75.6.0" "wheel==0.45.1"
+
+# Lockfile-strict install — the lockfile is the single source of truth for
+# direct dependencies. We use --no-deps to refuse implicit transitive
+# upgrades; the lockfile must list everything we install.
+COPY requirements.lock.txt ./
+RUN pip wheel \
+        --no-deps \
+        --wheel-dir /wheels \
+        -r requirements.lock.txt
+
+# Build a wheel for the local package so the runtime stage installs it
+# the same way it installs everything else (no editable installs in prod).
+COPY pyproject.toml ./
+COPY schemas ./schemas
+COPY infra ./infra
+COPY storage ./storage
+COPY core ./core
+COPY apps ./apps
+COPY sdk ./sdk
+RUN pip wheel --no-deps --wheel-dir /wheels .
+
+
+# --- runtime stage ----------------------------------------------------------
+FROM python:3.12.7-slim-bookworm AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore \
+    ENVIRONMENT=production \
+    LOG_FORMAT=json \
+    LOG_LEVEL=INFO \
+    OTEL_ENABLED=true \
+    UI_ENABLED=true
+
+# Install only the runtime cert bundle. No compilers, no curl, no shells
+# beyond what the base image already ships.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates tini \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+ && apt-get clean
+
+# Non-root user — security baseline. Fixed uid/gid so volume permissions
+# survive across container restarts on bind-mounted volumes.
+RUN groupadd --system --gid 1000 memcl \
+ && useradd --system --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin memcl
+
+WORKDIR /app
+
+# Bring wheels over from the builder and install everything in one layer.
+# `--no-index --find-links` guarantees we never fall back to a network
+# install if a wheel is missing — surfaces the gap loudly during build.
+COPY --from=builder /wheels /wheels
+COPY requirements.lock.txt ./
+RUN pip install \
+        --no-deps \
+        --no-index \
+        --find-links=/wheels \
+        --no-cache-dir \
+        -r requirements.lock.txt \
+ && pip install \
+        --no-deps \
+        --no-index \
+        --find-links=/wheels \
+        --no-cache-dir \
+        memory-cl \
+ && rm -rf /wheels requirements.lock.txt /root/.cache /tmp/* \
+ && find /usr/local/lib/python3.12 -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+
+# Application source — only what the runtime needs. Static UI bundle is
+# optional (UI service runs separately in production compose).
+COPY --chown=memcl:memcl scripts ./scripts
+RUN chmod +x ./scripts/boot.sh \
+ && chown -R memcl:memcl /app
+
+USER memcl
+
+EXPOSE 8000
+
+# Stdlib-only health probe — keeps `curl` out of the final image and
+# avoids the corresponding CVE surface area.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["python", "-c", "import urllib.request,sys; \
+sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=4).status==200 else sys.exit(1)"]
+
+# tini reaps orphaned uvicorn workers cleanly on SIGTERM.
+ENTRYPOINT ["/usr/bin/tini", "--", "./scripts/boot.sh"]
+CMD ["uvicorn", "apps.api.main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--proxy-headers", \
+     "--forwarded-allow-ips=*", \
+     "--no-access-log"]

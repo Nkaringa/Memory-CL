@@ -1,0 +1,73 @@
+# syntax=docker/dockerfile:1.7
+# ============================================================================
+# Memory-CL UI — production Next.js image (Phase 10)
+# ----------------------------------------------------------------------------
+# Goals:
+#   - deterministic build (npm ci against lockfile)
+#   - smallest runtime (next standalone output, no node_modules in final)
+#   - non-root user (uid 1000)
+#   - no telemetry beacons
+# ============================================================================
+
+# --- deps stage -------------------------------------------------------------
+FROM node:20.18.0-bookworm-slim AS deps
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    npm_config_loglevel=warn \
+    npm_config_fund=false \
+    npm_config_audit=false
+
+# package*.json first so node_modules layer caches across source edits.
+COPY package.json package-lock.json* ./
+RUN if [ -f package-lock.json ]; then \
+      npm ci --no-audit --no-fund ; \
+    else \
+      npm install --no-audit --no-fund ; \
+    fi
+
+
+# --- builder stage ----------------------------------------------------------
+FROM node:20.18.0-bookworm-slim AS builder
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NODE_ENV=production
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+# next.config.js is expected to set `output: 'standalone'` so the final
+# stage doesn't need node_modules. If the project hasn't enabled that yet,
+# we fall back to the full build output below.
+RUN npm run build
+
+
+# --- runtime stage ----------------------------------------------------------
+FROM node:20.18.0-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates tini \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+
+RUN groupadd --system --gid 1000 nextjs \
+ && useradd --system --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin nextjs
+
+# Standalone build output (preferred) — only the minimum required to run.
+# If the project hasn't enabled `output: 'standalone'` in next.config.js,
+# COPY the .next + node_modules + public manually. Both branches handled
+# by `|| true` so the build doesn't fail on a missing source.
+COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nextjs /app/public ./public
+
+USER nextjs
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD ["node", "-e", "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))"]
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "server.js"]

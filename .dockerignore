@@ -1,0 +1,63 @@
+# ============================================================================
+# .dockerignore — keeps build context lean and reproducible.
+# Anything reachable here is copied into the build context every `docker
+# build`. Excluding caches, env files, and the UI source from the API
+# image both shrinks the image and prevents secrets from leaking in.
+# ============================================================================
+
+# Python build / cache artifacts
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv
+venv
+*.egg-info
+build
+dist
+
+# Test + lint caches
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+.coverage
+.coverage.*
+
+# VCS + editor metadata
+.git
+.gitignore
+.gitattributes
+.editorconfig
+.vscode
+.idea
+
+# Environment files — NEVER ship these into an image
+.env
+.env.*
+!.env.example
+
+# Top-level developer docs (the runtime doesn't need markdown)
+*.md
+docs
+_specs
+Home-Install
+
+# UI source — the UI ships as its own image (ui/Dockerfile.production)
+ui/node_modules
+ui/.next
+ui/out
+ui/coverage
+
+# Local data / fixtures
+data
+tmp
+*.sqlite
+*.db
+
+# CI / orchestration files unrelated to the Python image
+.github
+docker-compose*.yml
+Dockerfile*
+!Dockerfile.production

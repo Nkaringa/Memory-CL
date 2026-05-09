@@ -1,0 +1,102 @@
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
+
+from pathspec import GitIgnoreSpec
+
+from schemas import FileRef, Language
+
+# Hard skips applied even without a .gitignore. These directories never
+# contain user-relevant Python source for our purposes.
+_DEFAULT_IGNORES: tuple[str, ...] = (
+    ".git/",
+    ".hg/",
+    ".svn/",
+    ".venv/",
+    "venv/",
+    "env/",
+    "__pycache__/",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+    "node_modules/",
+    "dist/",
+    "build/",
+    "*.egg-info/",
+    ".tox/",
+    ".idea/",
+    ".vscode/",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class WalkResult:
+    """Output of a single repo walk.
+
+    `files` is sorted alphabetically by repo-relative POSIX path —
+    determinism rule from PHASE_2_PLAN §6.
+    """
+
+    repo_id: str
+    repo_root: Path
+    files: tuple[FileRef, ...]
+
+
+class FileWalker:
+    """Deterministic, gitignore-aware repo walker.
+
+    Phase 2 walks for `*.py` only. Adding more languages later is a
+    pure additive change to `LANGUAGE_EXTENSIONS`.
+    """
+
+    LANGUAGE_EXTENSIONS: tuple[tuple[str, Language], ...] = (
+        (".py", Language.PYTHON),
+    )
+
+    def __init__(
+        self,
+        *,
+        extra_ignores: Iterable[str] = (),
+        respect_gitignore: bool = True,
+    ) -> None:
+        self._extra_ignores = tuple(extra_ignores)
+        self._respect_gitignore = respect_gitignore
+
+    def walk(self, repo_path: Path | str, *, repo_id: str) -> WalkResult:
+        root = Path(repo_path).resolve()
+        if not root.is_dir():
+            raise NotADirectoryError(f"repo_path is not a directory: {root}")
+
+        spec = self._build_spec(root)
+        ext_to_lang = dict(self.LANGUAGE_EXTENSIONS)
+
+        files: list[FileRef] = []
+        # `Path.rglob` order is not deterministic across filesystems, so we
+        # collect into a list and sort explicitly at the end.
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(root).as_posix()
+            if spec.match_file(rel):
+                continue
+            language = ext_to_lang.get(path.suffix)
+            if language is None:
+                continue
+            files.append(FileRef(repo_id=repo_id, path=rel, language=language))
+
+        files.sort(key=lambda f: f.path)
+        return WalkResult(repo_id=repo_id, repo_root=root, files=tuple(files))
+
+    def _build_spec(self, root: Path) -> GitIgnoreSpec:
+        patterns: list[str] = list(_DEFAULT_IGNORES)
+        patterns.extend(self._extra_ignores)
+        if self._respect_gitignore:
+            gitignore = root / ".gitignore"
+            if gitignore.exists():
+                patterns.extend(
+                    line for line in gitignore.read_text(encoding="utf-8").splitlines()
+                    if line.strip() and not line.lstrip().startswith("#")
+                )
+        return GitIgnoreSpec.from_lines(patterns)

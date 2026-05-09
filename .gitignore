@@ -1,0 +1,36 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
+.env
+.env.local
+.env.production.local
+
+# Local-only authoring artifacts (project prompts, phase logs, original
+# specs that bootstrapped the build). Kept on disk for reference but
+# never committed — the public-facing docs live at the repo root and
+# under docs/.
+_specs/
+
+# Local-only homelab + explainer docs (personal deployment notes,
+# pitch sheets). Useful on disk, not for the public repo.
+Home-Install/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+*.egg-info/
+build/
+dist/
+
+.idea/
+.vscode/
+*.swp
+.DS_Store

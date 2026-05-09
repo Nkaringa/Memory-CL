@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Engineering-grade dark theme. Light mode is intentionally not the
+   default — Memory-CL UI is meant for transparency over a deterministic
+   engine; high-contrast monospace + dim chrome is the right register.  */
+:root {
+  --bg: 13 17 23;
+  --panel: 22 27 34;
+  --fg: 230 234 240;
+  --muted: 139 148 158;
+  --border: 48 54 61;
+  --accent: 88 166 255;
+  --ok: 63 185 80;
+  --warn: 240 162 76;
+  --bad: 248 81 73;
+}
+
+html, body { height: 100%; }
+body {
+  @apply bg-bg text-fg antialiased;
+  font-feature-settings: "ss01", "cv02", "cv11";
+}
+
+::selection { background: rgba(88, 166, 255, 0.25); }
+
+/* Scrollbar — minimal but visible in dark mode. */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: rgb(var(--border));
+  border-radius: 4px;
+}
+
+/* Code regions — used by Monaco fallbacks + JSON dumps. */
+.mono { font-family: theme("fontFamily.mono"); }
+.muted { color: rgb(var(--muted)); }
+
+/* Pipeline-step pulse for the live trace viewer. */
+@keyframes pulse-step {
+  0% { background-color: rgb(var(--accent) / 0.1); }
+  50% { background-color: rgb(var(--accent) / 0.3); }
+  100% { background-color: rgb(var(--accent) / 0.1); }
+}
+.pipeline-step-active {
+  animation: pulse-step 1.4s ease-in-out infinite;
+}
