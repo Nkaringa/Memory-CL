@@ -27,9 +27,15 @@ case "$ENV_NAME" in
 esac
 
 # Verify the package is importable before exec — surfaces a clean
-# error early instead of a uvicorn traceback.
-python -c "import apps.api.main" 2>/dev/null || {
-  log "FATAL: apps.api.main failed to import"
+# error early instead of a uvicorn traceback. We deliberately do NOT
+# redirect stderr to /dev/null here: when this check fails, the
+# Python traceback IS the diagnostic. Swallowing it (the previous
+# behavior) made every boot crash look identical and forced operators
+# to bypass boot.sh with `docker run --entrypoint python …` to find
+# the real error. Trade a few noisy warning lines for actionable
+# failure logs.
+python -c "import apps.api.main" || {
+  log "FATAL: apps.api.main failed to import (traceback above)"
   exit 70
 }
 
