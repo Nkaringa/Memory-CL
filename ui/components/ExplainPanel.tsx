@@ -150,8 +150,8 @@ export function ExplainPanel({ result, entry, className }: ExplainPanelProps) {
             </div>
           </div>
           <ul className="space-y-1.5">
-            {features.map((f) => (
-              <FeatureRow key={f.key} {...f} />
+            {features.map(({ key, ...rest }) => (
+              <FeatureRow key={key} {...rest} />
             ))}
           </ul>
         </div>

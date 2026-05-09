@@ -63,7 +63,7 @@ export function CommandPalette() {
         const dest = map[e.key.toLowerCase()];
         if (dest) {
           pending = false;
-          router.push(dest);
+          router.push(dest as never);
         }
       }
     }
@@ -112,7 +112,7 @@ export function CommandPalette() {
                 )}
                 onClick={() => {
                   setOpen(false);
-                  router.push(item.href);
+                  router.push(item.href as never);
                 }}
               >
                 <div>
