@@ -51,18 +51,22 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates tini \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
-RUN groupadd --system --gid 1000 nextjs \
- && useradd --system --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin nextjs
+# Use the pre-existing `node` user that the official Node base image
+# ships at uid/gid 1000. The earlier version of this Dockerfile tried
+# to create a `nextjs` user at uid 1000 and `useradd` failed with
+# exit code 4 because that uid was already taken by `node`. Reusing
+# the base-image user is the standard pattern from the Next.js
+# Docker docs and gives us the same "non-root, uid 1000" property.
 
 # Standalone build output (preferred) — only the minimum required to run.
 # If the project hasn't enabled `output: 'standalone'` in next.config.js,
 # COPY the .next + node_modules + public manually. Both branches handled
 # by `|| true` so the build doesn't fail on a missing source.
-COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
-COPY --from=builder --chown=nextjs:nextjs /app/public ./public
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+COPY --from=builder --chown=node:node /app/public ./public
 
-USER nextjs
+USER node
 
 EXPOSE 3000
 
