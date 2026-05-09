@@ -39,14 +39,16 @@ def _build_app(*, audit_logger: AuditLogger | None = None) -> FastAPI:
             units_repo=AsyncMock(), graph_repo=AsyncMock(), vector_repo=AsyncMock(),
             embedding_dimension=32,
         )
-        # Phase-9 attributes attached after construction.
-        state.safe_mode = SafeModeController()  # type: ignore[attr-defined]
-        state.feature_flags = FeatureFlagRegistry.from_settings(Settings())  # type: ignore[attr-defined]
-        state.audit_logger = audit_logger or AuditLogger()  # type: ignore[attr-defined]
+        # Phase-9 controllers live on FastAPI's `app.state`, NOT on
+        # the `AppState` dataclass. The Phase-11 audit fix made the
+        # routers consult `request.app.state` exclusively, so we
+        # attach there only.
         registry = build_default_registry()
-        state.mcp_registry = registry  # type: ignore[attr-defined]
         app.state.app_state = state
         app.state.mcp_registry = registry
+        app.state.safe_mode = SafeModeController()
+        app.state.feature_flags = FeatureFlagRegistry.from_settings(Settings())
+        app.state.audit_logger = audit_logger or AuditLogger()
         yield
 
     app = FastAPI(lifespan=_ls)

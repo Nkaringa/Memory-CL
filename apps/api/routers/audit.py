@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict
 
 from apps.api.dependencies import AppStateDep
@@ -34,13 +34,23 @@ class AuditVerifyResponse(BaseModel):
     broken_at_seq: int | None = None
 
 
+def _resolve_audit_logger(request: Request, state: AppStateDep):  # noqa: ARG001
+    """Audit logger is attached during lifespan to ``app.state``, NOT to
+    the ``AppState`` dataclass. Read from the right place — the previous
+    `getattr(state, "audit_logger", None)` always returned None in
+    production and made every audit call 503.
+    """
+    return getattr(request.app.state, "audit_logger", None)
+
+
 @router.get("/tail", response_model=AuditTailResponse)
 async def tail(
+    request: Request,
     state: AppStateDep,
     limit: int = Query(default=50, gt=0, le=1000),
 ) -> AuditTailResponse:
     """Return the most recent `limit` audit entries (deterministic order)."""
-    logger = getattr(state, "audit_logger", None)
+    logger = _resolve_audit_logger(request, state)
     if logger is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -61,11 +71,13 @@ async def tail(
 
 
 @router.get("/verify", response_model=AuditVerifyResponse)
-async def verify(state: AppStateDep) -> AuditVerifyResponse:
+async def verify(
+    request: Request, state: AppStateDep,
+) -> AuditVerifyResponse:
     """Re-walk the audit chain and report whether it's intact."""
     from infra.audit.immutable_log_store import ChainBrokenError
 
-    logger = getattr(state, "audit_logger", None)
+    logger = _resolve_audit_logger(request, state)
     if logger is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

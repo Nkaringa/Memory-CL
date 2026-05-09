@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict
 
 from apps.api.dependencies import AppStateDep
@@ -50,13 +50,27 @@ class StatusResponse(BaseModel):
 
 
 @router.get("", response_model=StatusResponse)
-async def status_summary(state: AppStateDep) -> StatusResponse:
-    """One-shot view of the service's production posture."""
+async def status_summary(
+    request: Request, state: AppStateDep,
+) -> StatusResponse:
+    """One-shot view of the service's production posture.
+
+    The Phase-9 controllers (``safe_mode``, ``feature_flags``,
+    ``boot_outcome``, ``mcp_registry``, ``audit_logger``) live on the
+    FastAPI ``app.state`` bag — NOT on the ``AppState`` dataclass.
+    The earlier version of this handler read them off ``state`` and
+    silently received ``None`` for everything in production, even
+    though the controllers were correctly attached during ``lifespan``.
+    """
     settings = get_settings()
-    safe_mode = state.safe_mode.status if hasattr(state, "safe_mode") else None
-    flags = state.feature_flags if hasattr(state, "feature_flags") else None
-    boot = getattr(state, "boot_outcome", None)
-    registry = getattr(state, "mcp_registry", None)
+    app_state = request.app.state
+    sm = getattr(app_state, "safe_mode", None)
+    safe_mode = sm.status if sm is not None else None
+    flags = getattr(app_state, "feature_flags", None)
+    boot = getattr(app_state, "boot_outcome", None)
+    registry = getattr(app_state, "mcp_registry", None)
+    _ = state  # AppState (storage clients) — not used here, but kept
+               # in the signature so the dependency wiring stays uniform
 
     from schemas.base import SCHEMA_VERSION
     return StatusResponse(
