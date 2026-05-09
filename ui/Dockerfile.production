@@ -64,7 +64,10 @@ RUN apt-get update \
 # by `|| true` so the build doesn't fail on a missing source.
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
-COPY --from=builder --chown=node:node /app/public ./public
+# NOTE: this Next.js project does NOT use a `public/` directory (no
+# favicon, images, robots.txt, etc.), so we deliberately skip the
+# typical `COPY /app/public ./public` line. If you later add static
+# assets under ui/public/, restore that COPY here.
 
 USER node
 
