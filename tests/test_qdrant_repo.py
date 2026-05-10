@@ -53,10 +53,10 @@ async def test_ensure_collection_creates_when_missing() -> None:
     client = AsyncMock()
     client.collection_exists = AsyncMock(return_value=False)
     repo = QdrantVectorRepository(client=client)
-    await repo.ensure_collection("repo:r1", vector_size=1536)
+    await repo.ensure_collection("repo_r1", vector_size=1536)
     client.create_collection.assert_awaited()
     # Cache primed for placeholder vectors.
-    assert repo._size_cache["repo:r1"] == 1536
+    assert repo._size_cache["repo_r1"] == 1536
 
 
 @pytest.mark.asyncio
@@ -64,9 +64,9 @@ async def test_ensure_collection_skips_when_present_but_caches_size() -> None:
     client = AsyncMock()
     client.collection_exists = AsyncMock(return_value=True)
     repo = QdrantVectorRepository(client=client)
-    await repo.ensure_collection("repo:r1", vector_size=1536)
+    await repo.ensure_collection("repo_r1", vector_size=1536)
     client.create_collection.assert_not_awaited()
-    assert repo._size_cache["repo:r1"] == 1536
+    assert repo._size_cache["repo_r1"] == 1536
 
 
 @pytest.mark.asyncio

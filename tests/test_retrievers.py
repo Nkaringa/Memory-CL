@@ -124,7 +124,7 @@ async def test_vector_retriever_top_k_with_payload_filter() -> None:
     ])
     retriever = VectorRetriever(
         client=client, embedder=DeterministicEmbedder(dimension=8),
-        collection="repo:r",
+        collection="repo_r",
     )
     cands = await retriever.search("auth", top_k=10, unit_kinds=["fn"])
     # `cls` filtered out by unit_kinds.
@@ -143,7 +143,7 @@ async def test_vector_retriever_skips_payload_only_phase2_points() -> None:
     ])
     retriever = VectorRetriever(
         client=client, embedder=DeterministicEmbedder(dimension=8),
-        collection="repo:r",
+        collection="repo_r",
     )
     cands = await retriever.search("x", top_k=5)
     assert [c.unit_id for c in cands] == ["u2"]

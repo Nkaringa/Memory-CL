@@ -53,7 +53,11 @@ async def ingest_repo(req: IngestRequest, state: AppStateDep) -> IngestResponse:
             detail=f"repo_path is not a directory: {repo_root}",
         )
 
-    collection = f"repo:{req.repo_id}"
+    # Qdrant ≥1.11 rejects ":" in collection names with a 422. Use "_"
+    # as the separator to keep names unambiguous + accepted everywhere.
+    # The user-facing repo_id is unchanged; only the storage-layer name
+    # is rewritten.
+    collection = f"repo_{req.repo_id}"
     await state.vector_repo.ensure_collection(collection, _DEFAULT_VECTOR_SIZE)
 
     ctx = make_context(

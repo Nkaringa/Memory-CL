@@ -338,7 +338,7 @@ async def test_ingest_repository_runs_pipeline(tmp_path: Path) -> None:
     assert resp.status.value == "success"
     assert resp.data["repo_id"] == "acme"
     assert resp.data["commit_sha"] == "deadbeef"
-    assert resp.data["units_collection"] == "repo:acme"
+    assert resp.data["units_collection"] == "repo_acme"
     assert resp.data["metrics"]["units_emitted"] >= 1
 
 

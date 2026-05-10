@@ -126,7 +126,7 @@ async def _run_phase23() -> tuple[list, _FakeQdrant, _FakeGraphRepo]:
     ))
     ctx = CompressionContext(
         repo_id="acme", commit_sha="commit-deadbeef",
-        units_collection="repo:acme",
+        units_collection="repo_acme",
         vector_repo=vector_repo, metrics=CompressionMetrics(),
     )
     await CompressionPipeline(
@@ -147,7 +147,7 @@ async def _run_phase23() -> tuple[list, _FakeQdrant, _FakeGraphRepo]:
 async def _run_phase4_packet(units, fake_qdrant, fake_graph, query_text: str):
     embedder = DeterministicEmbedder(dimension=32)
     vector_retriever = VectorRetriever(
-        client=fake_qdrant, embedder=embedder, collection="repo:acme",
+        client=fake_qdrant, embedder=embedder, collection="repo_acme",
     )
     graph_retriever = GraphRetriever(fake_graph, max_depth=2)
     # No metadata channel needed here — the test focuses on
@@ -214,7 +214,7 @@ async def test_phase4_golden_graph_seed_pulls_in_candidates() -> None:
         planner=QueryPlanner(default_max_depth=2),
         graph=GraphRetriever(gr, max_depth=2),
         vector=VectorRetriever(client=qd, embedder=embedder,
-                               collection="repo:acme"),
+                               collection="repo_acme"),
         metadata=None,
     )
     res = await hybrid.run(

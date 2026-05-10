@@ -27,7 +27,7 @@ def _build_fake_api() -> FastAPI:
         return {
             "repo_id": body["repo_id"],
             "commit_sha": body["commit_sha"],
-            "units_collection": f"repo:{body['repo_id']}",
+            "units_collection": f"repo_{body['repo_id']}",
             "metrics": {"units_emitted": 1, "files_walked": 1},
             "failed_files": [],
         }
@@ -127,7 +127,7 @@ async def test_sdk_ingest_repository(asgi_transport: httpx.ASGITransport) -> Non
             repo_id="acme", repo_path="/tmp", commit_sha="abc",
         )
     assert res.repo_id == "acme"
-    assert res.units_collection == "repo:acme"
+    assert res.units_collection == "repo_acme"
 
 
 @pytest.mark.asyncio

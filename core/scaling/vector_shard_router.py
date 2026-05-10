@@ -40,8 +40,9 @@ class VectorShardRouter:
             shard_index=idx,
             # Same name pattern Phase-2 already uses, with the shard
             # index suffix so the operator can pin collections to a
-            # specific Qdrant cluster.
-            collection_name=f"repo:{repo_id}::s{idx}",
+            # specific Qdrant cluster. Underscore separator (not ":")
+            # because Qdrant ≥1.11 rejects ":" in collection names.
+            collection_name=f"repo_{repo_id}_s{idx}",
         )
 
 

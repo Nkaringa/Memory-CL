@@ -32,7 +32,7 @@ def _make_ctx(vector_repo: AsyncMock | None = None) -> CompressionContext:
     return CompressionContext(
         repo_id=REPO,
         commit_sha=COMMIT,
-        units_collection="repo:r",
+        units_collection="repo_r",
         vector_repo=repo,
         metrics=CompressionMetrics(),
     )

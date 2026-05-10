@@ -52,7 +52,7 @@ def test_vector_router_co_locates_with_graph() -> None:
 def test_vector_router_collection_name_includes_shard() -> None:
     v = VectorShardRouter(shard_count=4)
     assignment = v.route(repo_id="acme")
-    assert assignment.collection_name.startswith("repo:acme::s")
+    assert assignment.collection_name.startswith("repo_acme_s")
 
 
 def test_routers_reject_zero_shard_count() -> None:
@@ -80,7 +80,7 @@ def test_distributor_assigns_repos_to_their_shards() -> None:
     for a in plan.assignments:
         assert a.graph_shard_id.startswith("graph-")
         assert a.vector_shard_id.startswith("vector-")
-        assert a.vector_collection.startswith("repo:")
+        assert a.vector_collection.startswith("repo_")
 
 
 def test_distributor_is_byte_deterministic() -> None:

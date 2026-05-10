@@ -27,7 +27,9 @@ class IngestRepositoryTool:
         # at the MCP boundary we don't have access to a real embedder
         # config beyond what AppState exposes, so we read it from there.
         embedding_dim = getattr(ctx.state.embedder, "dimension", 1536)
-        collection = f"repo:{request.repo_id}"
+        # See apps/api/routers/ingest.py for the rationale: Qdrant ≥1.11
+        # rejects ":" in collection names. Use "_" as separator.
+        collection = f"repo_{request.repo_id}"
         await ctx.state.vector_repo.ensure_collection(collection, embedding_dim)
 
         ic = make_context(

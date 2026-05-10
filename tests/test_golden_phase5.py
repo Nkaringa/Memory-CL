@@ -162,7 +162,7 @@ async def _seed_qdrant_via_ingest(qdrant: _FakeQdrant) -> None:
     ))
     ctx = CompressionContext(
         repo_id="acme", commit_sha="commit-deadbeef",
-        units_collection="repo:acme",
+        units_collection="repo_acme",
         vector_repo=vector_repo, metrics=CompressionMetrics(),
     )
     await CompressionPipeline(
