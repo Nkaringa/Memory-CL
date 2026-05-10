@@ -62,14 +62,21 @@ WITH input AS (
         :kind AS kind, :name AS name, :qualified_name AS qualified_name,
         :parent_qualified_name AS parent_qualified_name,
         :file_path AS file_path, :language AS language,
-        :line_start AS line_start, :line_end AS line_end,
+        -- INTEGER columns need explicit CASTs in this CTE: asyncpg
+        -- can't infer the target column type through the WITH wrapper,
+        -- so unparameterized `:line_start AS line_start` arrives at
+        -- the INSERT as TEXT and Postgres rejects it with
+        -- "column line_start is of type integer but expression is of
+        --  type text". Same fix shape as the array columns below.
+        CAST(:line_start AS INTEGER) AS line_start,
+        CAST(:line_end AS INTEGER) AS line_end,
         :content AS content, :source_sha AS source_sha,
         :docstring AS docstring, :signature AS signature,
         CAST(:imports AS TEXT[]) AS imports,
         CAST(:calls AS TEXT[]) AS calls,
         CAST(:references AS TEXT[]) AS "references",
         CAST(:bases AS TEXT[]) AS bases,
-        :token_count AS token_count,
+        CAST(:token_count AS INTEGER) AS token_count,
         :schema_version AS schema_version,
         :created_at AS created_at, :updated_at AS updated_at,
         :source AS source, :checksum AS checksum
