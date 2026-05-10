@@ -89,6 +89,11 @@ services:
       NODE_ENV: production
       MEMORY_CL_BACKEND_URL: http://api:8000
       NEXT_TELEMETRY_DISABLED: "1"
+      # Server-side only: ui/middleware.ts injects this as the
+      # `X-API-Key` header on every /api/* request before the rewrite
+      # proxies it to the api container. The browser never sees the
+      # value — it stays inside the Next.js server.
+      MCP_API_KEY: ${MCP_API_KEY:?required}
     ports:
       - "3000:3000"
     depends_on:
