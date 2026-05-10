@@ -29,13 +29,32 @@ RUN if [ -f package-lock.json ]; then \
 # --- builder stage ----------------------------------------------------------
 FROM node:20.18.0-bookworm-slim AS builder
 WORKDIR /app
-ENV NEXT_TELEMETRY_DISABLED=1 \
+
+# Backend URL bake-in.
+#
+# Next.js standalone output (`output: 'standalone'` in next.config.mjs)
+# evaluates `next.config.mjs::rewrites()` AT BUILD TIME and freezes the
+# computed destination into the bundle. That means
+# `process.env.MEMORY_CL_BACKEND_URL` must be present during
+# `npm run build` — setting it only at container runtime has no effect
+# (we discovered this the hard way: the rewrite kept proxying to the
+# default `http://localhost:8000` even though the env var was set
+# correctly inside the container).
+#
+# Default target is `http://api:8000` — the docker-compose service name
+# in our production stack. Override with
+# `docker build --build-arg MEMORY_CL_BACKEND_URL=...` for other
+# topologies (e.g. behind a sidecar proxy).
+ARG MEMORY_CL_BACKEND_URL=http://api:8000
+ENV MEMORY_CL_BACKEND_URL=${MEMORY_CL_BACKEND_URL} \
+    NEXT_TELEMETRY_DISABLED=1 \
     NODE_ENV=production
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# next.config.js is expected to set `output: 'standalone'` so the final
-# stage doesn't need node_modules. If the project hasn't enabled that yet,
-# we fall back to the full build output below.
+# next.config.mjs sets `output: 'standalone'` so the final stage
+# doesn't need node_modules. The rewrite destination is baked in this
+# step using MEMORY_CL_BACKEND_URL above.
 RUN npm run build
 
 
