@@ -64,14 +64,17 @@ WITH input AS (
         :file_path AS file_path, :language AS language,
         -- Every non-TEXT column needs an explicit CAST in this CTE.
         -- asyncpg can't infer the target column type through the WITH
-        -- wrapper, so any bind parameter `:foo AS foo` arrives at the
-        -- INSERT typed as TEXT and Postgres rejects:
-        --     column "foo" is of type integer but expression is of type text
-        --     column "created_at" is of type timestamp with time zone
-        --                          but expression is of type text
-        -- TEXT and TEXT[] columns work as-is (asyncpg sends Python
-        -- str/list[str] as text). INTEGER and TIMESTAMPTZ columns
-        -- below all need the explicit cast.
+        -- wrapper, so a bare bind parameter arrives at the INSERT
+        -- typed as TEXT and Postgres rejects with a "of type X but
+        -- expression is of type text" error. TEXT and TEXT[] columns
+        -- work as-is (asyncpg sends Python str/list[str] as text);
+        -- the INTEGER and TIMESTAMPTZ columns below need the cast.
+        --
+        -- DO NOT put ":name"-style placeholders inside this comment
+        -- block — SQLAlchemy's text() scans the entire string
+        -- (comments included) for ":name" bind parameters and treats
+        -- them as required, breaking execution at run time. (That's
+        -- exactly how this comment got rewritten the second time.)
         CAST(:line_start AS INTEGER) AS line_start,
         CAST(:line_end AS INTEGER) AS line_end,
         :content AS content, :source_sha AS source_sha,
