@@ -119,7 +119,7 @@ def _build_hybrid(
     vector = VectorRetriever(
         client=state.qdrant.client,
         embedder=state.embedder,
-        collection=f"repo:{repo_id}",
+        collection=f"repo_{repo_id}",
     )
     metadata = MetadataRetriever(state.postgres.engine)
     return HybridRetriever(

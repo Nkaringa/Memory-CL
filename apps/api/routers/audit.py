@@ -34,7 +34,7 @@ class AuditVerifyResponse(BaseModel):
     broken_at_seq: int | None = None
 
 
-def _resolve_audit_logger(request: Request, state: AppStateDep):  # noqa: ARG001
+def _resolve_audit_logger(request: Request, state: AppStateDep):
     """Audit logger is attached during lifespan to ``app.state``, NOT to
     the ``AppState`` dataclass. Read from the right place — the previous
     `getattr(state, "audit_logger", None)` always returned None in

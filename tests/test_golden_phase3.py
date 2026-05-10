@@ -47,7 +47,7 @@ def _ctx() -> tuple[CompressionContext, AsyncMock]:
     return CompressionContext(
         repo_id="acme",
         commit_sha="commit-deadbeef",
-        units_collection="repo:acme",
+        units_collection="repo_acme",
         vector_repo=repo,
         metrics=CompressionMetrics(),
     ), repo

@@ -144,9 +144,9 @@ async def test_pipeline_writes_one_vector_per_unit() -> None:
         chunker=ChunkingStrategy(chunk_size=400, chunk_overlap=40),
         vector_repo=repo,
     )
-    res = await pipe.run(units, collection="repo:r")
+    res = await pipe.run(units, collection="repo_r")
     assert res.vectors_written == 3
-    repo.ensure_collection.assert_awaited_once_with("repo:r", 32)
+    repo.ensure_collection.assert_awaited_once_with("repo_r", 32)
 
     sent_points = repo.upsert_payloads.call_args.args[1]
     sent_points = list(sent_points)

@@ -81,7 +81,7 @@ def test_ingest_endpoint_runs_pipeline(tmp_path: Path) -> None:
     body = resp.json()
     assert body["repo_id"] == "tenant-1"
     assert body["commit_sha"] == "abc123"
-    assert body["units_collection"] == "repo:tenant-1"
+    assert body["units_collection"] == "repo_tenant-1"
     assert body["metrics"]["files_walked"] >= 1
     assert body["metrics"]["units_emitted"] >= 1
     assert body["failed_files"] == []
@@ -89,7 +89,7 @@ def test_ingest_endpoint_runs_pipeline(tmp_path: Path) -> None:
     # ensure_collection was called by the endpoint with the per-repo name.
     state.vector_repo.ensure_collection.assert_awaited_once()
     name_arg = state.vector_repo.ensure_collection.await_args.args[0]
-    assert name_arg == "repo:tenant-1"
+    assert name_arg == "repo_tenant-1"
 
 
 def test_ingest_rejects_bad_repo_path(tmp_path: Path) -> None:
