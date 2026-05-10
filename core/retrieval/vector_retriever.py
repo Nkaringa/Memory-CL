@@ -98,9 +98,18 @@ class VectorRetriever:
                 # Skip points without a real vector (Phase-2 placeholders).
                 if payload.get("has_vector") is False:
                     continue
+                # Pull the canonical unit_id from the payload first.
+                # The qdrant point's `id` is now a derived UUID (qdrant
+                # ≥1.7 rejects raw SHA-256 hex strings — see
+                # `storage/qdrant_repo.py::_to_qdrant_point_id`); the
+                # original Memory-CL unit_id travels in the payload so
+                # the join back to Postgres uses the canonical key.
+                # Falls back to the qdrant id only for legacy data
+                # written before payloads embedded `unit_id`.
+                unit_id = str(payload.get("unit_id") or _id_of(h))
                 candidates.append(
                     RetrievalCandidate(
-                        unit_id=str(_id_of(h)),
+                        unit_id=unit_id,
                         channel=RetrievalChannel.VECTOR,
                         raw_score=_score_to_unit_interval(_score_of(h)),
                         file_path=payload.get("file_path"),

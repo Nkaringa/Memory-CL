@@ -36,6 +36,10 @@ def test_payload_keys_are_sorted_and_complete() -> None:
     expected = {
         "commit_sha", "file_path", "has_vector", "kind", "line_end",
         "line_start", "qualified_name", "repo_id", "source_sha",
+        # `unit_id` lives in the payload because the qdrant point's `id`
+        # field is a derived UUID (qdrant ≥1.7 rejects raw hex strings),
+        # so the canonical Memory-CL key has to ride along separately.
+        "unit_id",
     }
     assert set(payload.keys()) == expected
     # Determinism: ordered by sorted keys.
@@ -89,8 +93,12 @@ async def test_upsert_payloads_uses_placeholder_vector_and_sorts_input() -> None
 
     _args, kwargs = client.upsert.call_args
     sent_points = kwargs["points"]
-    ids = [p.id for p in sent_points]
-    assert ids == sorted(ids)
+    # Order is determined by the original Memory-CL unit_id (in the
+    # payload), NOT by the derived qdrant UUIDs (which look random).
+    # This preserves the existing determinism contract: same input
+    # batch always lands in the same order at qdrant.
+    unit_ids = [p.payload["unit_id"] for p in sent_points]
+    assert unit_ids == sorted(unit_ids)
     assert sent_points[0].vector == [0.0, 0.0, 0.0, 0.0]
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from collections.abc import Iterable
 from typing import Any
 
@@ -21,12 +22,42 @@ from storage.repositories import VectorPoint
 
 _tracer = get_tracer("storage.qdrant_repo")
 
+# Fixed namespace for derive-UUID-from-unit-id. Arbitrary uuid4 chosen
+# at design time and pinned forever — same input must always produce
+# the same UUID across every deploy. Do NOT regenerate this value.
+_QDRANT_POINT_NAMESPACE = uuid.UUID("e8c4b8c3-3e5f-4d3a-8b1d-d8b3c4a2c1f0")
+
+
+def _to_qdrant_point_id(unit_id: str) -> str:
+    """Translate a Memory-CL ``unit_id`` (SHA-256 hex string) into a
+    qdrant-accepted point ID.
+
+    Qdrant ≥1.7 enforces that point IDs are either an unsigned integer
+    or a UUID — bare hex strings get rejected with HTTP 400
+    "Format error in JSON body: value <X> is not a valid point ID".
+
+    We use ``uuid5`` over a pinned namespace because:
+
+    * deterministic — same unit_id always yields the same UUID
+    * collision-resistant for any practical corpus size
+    * the original unit_id is preserved in the payload, so retrieval
+      can join back to Postgres on the real key (see
+      `core/retrieval/vector_retriever.py`)
+    """
+    return str(uuid.uuid5(_QDRANT_POINT_NAMESPACE, unit_id))
+
 
 def _payload(point: VectorPoint) -> dict[str, Any]:
     """Stable payload schema written by Phase 2.
 
     Keys are sorted by Pydantic at write time? No — we control the dict
     here, so we sort manually to keep determinism guarantees.
+
+    `unit_id` is included so retrieval can map a qdrant hit back to the
+    Postgres `ingestion_units` row by the same key the rest of the
+    system uses. The qdrant point's `id` field carries a derived UUID
+    (qdrant rejects raw hex strings), so the original `unit_id` MUST
+    travel with the payload.
     """
     raw: dict[str, Any] = {
         "repo_id": point.repo_id,
@@ -38,6 +69,7 @@ def _payload(point: VectorPoint) -> dict[str, Any]:
         "commit_sha": point.commit_sha,
         "source_sha": point.source_sha,
         "has_vector": point.vector is not None,
+        "unit_id": point.point_id,
     }
     return {k: raw[k] for k in sorted(raw)}
 
@@ -104,7 +136,7 @@ class QdrantVectorRepository:
                 vector = list(p.vector) if p.vector else placeholder
                 structs.append(
                     PointStruct(
-                        id=p.point_id,
+                        id=_to_qdrant_point_id(p.point_id),
                         vector=vector,
                         payload=_payload(p),
                     )
