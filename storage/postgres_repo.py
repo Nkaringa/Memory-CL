@@ -62,12 +62,16 @@ WITH input AS (
         :kind AS kind, :name AS name, :qualified_name AS qualified_name,
         :parent_qualified_name AS parent_qualified_name,
         :file_path AS file_path, :language AS language,
-        -- INTEGER columns need explicit CASTs in this CTE: asyncpg
-        -- can't infer the target column type through the WITH wrapper,
-        -- so unparameterized `:line_start AS line_start` arrives at
-        -- the INSERT as TEXT and Postgres rejects it with
-        -- "column line_start is of type integer but expression is of
-        --  type text". Same fix shape as the array columns below.
+        -- Every non-TEXT column needs an explicit CAST in this CTE.
+        -- asyncpg can't infer the target column type through the WITH
+        -- wrapper, so any bind parameter `:foo AS foo` arrives at the
+        -- INSERT typed as TEXT and Postgres rejects:
+        --     column "foo" is of type integer but expression is of type text
+        --     column "created_at" is of type timestamp with time zone
+        --                          but expression is of type text
+        -- TEXT and TEXT[] columns work as-is (asyncpg sends Python
+        -- str/list[str] as text). INTEGER and TIMESTAMPTZ columns
+        -- below all need the explicit cast.
         CAST(:line_start AS INTEGER) AS line_start,
         CAST(:line_end AS INTEGER) AS line_end,
         :content AS content, :source_sha AS source_sha,
@@ -78,7 +82,8 @@ WITH input AS (
         CAST(:bases AS TEXT[]) AS bases,
         CAST(:token_count AS INTEGER) AS token_count,
         :schema_version AS schema_version,
-        :created_at AS created_at, :updated_at AS updated_at,
+        CAST(:created_at AS TIMESTAMPTZ) AS created_at,
+        CAST(:updated_at AS TIMESTAMPTZ) AS updated_at,
         :source AS source, :checksum AS checksum
 )
 INSERT INTO ingestion_units (
