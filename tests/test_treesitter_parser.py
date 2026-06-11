@@ -56,3 +56,127 @@ def test_module_docstring_from_leading_block_comment() -> None:
         const x = 1;
     """)
     assert units[0].docstring == "App entry point."
+
+
+def test_function_declarations() -> None:
+    units = _parse("""
+        function plain(a, b) { return a; }
+        async function fetcher(url) { return url; }
+        function* gen(x) { yield x; }
+        export default function App() { return null; }
+    """)
+    by_qname = {u.qualified_name: u for u in units}
+    assert by_qname["src.app.plain"].kind == UnitKind.FUNCTION
+    assert by_qname["src.app.plain"].signature == "plain(a, b)"
+    assert by_qname["src.app.fetcher"].signature == "async fetcher(url)"
+    assert by_qname["src.app.gen"].kind == UnitKind.FUNCTION
+    assert by_qname["src.app.App"].kind == UnitKind.FUNCTION
+
+
+def test_arrow_and_function_expression_bindings() -> None:
+    units = _parse("""
+        const useAuth = (token) => token;
+        const bare = x => x;
+        const legacy = function(a) { return a; };
+        export const exported = async () => 1;
+    """)
+    by_qname = {u.qualified_name: u for u in units}
+    assert by_qname["src.app.useAuth"].kind == UnitKind.FUNCTION
+    assert by_qname["src.app.useAuth"].signature == "useAuth(token)"
+    assert by_qname["src.app.bare"].signature == "bare(x)"
+    assert by_qname["src.app.legacy"].kind == UnitKind.FUNCTION
+    assert by_qname["src.app.exported"].signature == "async exported()"
+
+
+def test_class_with_methods_fields_and_extends() -> None:
+    units = _parse("""
+        class Service extends BaseService {
+          static VERSION = "1";
+          constructor(cfg) { this.cfg = cfg; }
+          async handle(req) { return req; }
+          onClick = () => 1;
+        }
+        class Plain extends React.Component {}
+    """)
+    by_qname = {u.qualified_name: u for u in units}
+    svc = by_qname["src.app.Service"]
+    assert svc.kind == UnitKind.CLASS
+    assert svc.bases == ["BaseService"]
+    assert by_qname["src.app.Service.constructor"].kind == UnitKind.METHOD
+    assert by_qname["src.app.Service.handle"].kind == UnitKind.METHOD
+    assert by_qname["src.app.Service.handle"].signature == "async handle(req)"
+    # Class-property arrow functions are methods in practice (React).
+    assert by_qname["src.app.Service.onClick"].kind == UnitKind.METHOD
+    # UPPER_CASE static field is a constant.
+    assert by_qname["src.app.Service.VERSION"].kind == UnitKind.CONSTANT
+    # parent chain
+    assert by_qname["src.app.Service.handle"].parent_qualified_name == "src.app.Service"
+    # member-expression base
+    assert by_qname["src.app.Plain"].bases == ["React.Component"]
+
+
+def test_top_level_constants_upper_case_only() -> None:
+    units = _parse("""
+        const MAX_RETRIES = 5;
+        const lower = 1;
+        export const NAMED_EXPORT = 2;
+    """)
+    by_qname = {u.qualified_name: u for u in units}
+    assert by_qname["src.app.MAX_RETRIES"].kind == UnitKind.CONSTANT
+    assert by_qname["src.app.NAMED_EXPORT"].kind == UnitKind.CONSTANT
+    assert "src.app.lower" not in by_qname
+
+
+def test_jsdoc_becomes_docstring() -> None:
+    units = _parse("""
+        /**
+         * Fetches the user.
+         * @param token auth token
+         */
+        const useAuth = (token) => token;
+    """)
+    by_qname = {u.qualified_name: u for u in units}
+    assert by_qname["src.app.useAuth"].docstring == "Fetches the user.\n@param token auth token"
+
+
+def test_typescript_signatures_and_skipped_type_decls() -> None:
+    units = _parse(
+        """
+        interface Props { name: string }
+        type Alias = string;
+        enum Color { Red }
+        export function score(a: number, b: number): number { return a + b; }
+        class Svc extends Base implements IFace {
+          handle(req: Request): void {}
+        }
+        """,
+        file_path="src/lib.ts",
+    )
+    by_qname = {u.qualified_name: u for u in units}
+    assert by_qname["src.lib.score"].signature == "score(a: number, b: number): number"
+    assert by_qname["src.lib.Svc"].bases == ["Base"]  # implements is not inheritance
+    assert by_qname["src.lib.Svc.handle"].kind == UnitKind.METHOD
+    # Type-level declarations carry no runtime logic — skipped.
+    assert "src.lib.Props" not in by_qname
+    assert "src.lib.Alias" not in by_qname
+    assert "src.lib.Color" not in by_qname
+
+
+def test_tsx_component_extracted() -> None:
+    units = _parse(
+        "export default function App() { return <div>hi</div>; }\n",
+        file_path="src/App.tsx",
+    )
+    by_qname = {u.qualified_name: u for u in units}
+    assert by_qname["src.App.App"].kind == UnitKind.FUNCTION
+
+
+def test_children_sorted_by_line() -> None:
+    units = _parse("""
+        function b() {}
+        function a() {}
+        const C = 1;
+    """)
+    rest = units[1:]
+    starts = [u.line_start for u in rest]
+    assert starts == sorted(starts)

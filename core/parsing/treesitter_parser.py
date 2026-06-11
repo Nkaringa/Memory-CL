@@ -83,6 +83,24 @@ _DOCUMENTABLE_TYPES = frozenset({
     "export_statement",
 })
 
+_FUNCTION_DECL_TYPES = frozenset({
+    "function_declaration",
+    "generator_function_declaration",
+})
+_FUNCTION_VALUE_TYPES = frozenset({
+    "arrow_function",
+    "function_expression",
+    "generator_function",
+})
+_DECL_CONTAINER_TYPES = frozenset({
+    "lexical_declaration",
+    "variable_declaration",
+})
+_FIELD_DEF_TYPES = frozenset({
+    "field_definition",          # JS grammar
+    "public_field_definition",   # TS grammar
+})
+
 
 def _module_docstring(root: Node) -> str | None:
     children = root.named_children
@@ -185,10 +203,11 @@ class TreeSitterParser:
             units = [module_unit, *children]
 
             duration = (time.perf_counter() - start) * 1000
+            final_status = "partial" if root.has_error else "success"
             emit_phase2_event(
                 event="parse_ok",
                 operation="treesitter_parser.parse_file",
-                status="success",
+                status=final_status,
                 duration_ms=duration,
                 file_path=file_path,
                 content_hash=content_sha(source),
@@ -202,8 +221,291 @@ class TreeSitterParser:
 # ---------------------------------------------------------------------------
 # Extractors — filled in by subsequent tasks
 # ---------------------------------------------------------------------------
+def _jsdoc_for(node: Node) -> str | None:
+    prev = node.prev_named_sibling
+    if prev is not None and prev.type == "comment":
+        text = _text(prev)
+        if text.startswith("/**"):
+            return _clean_block_comment(text)
+    return None
+
+
+def _is_constant_name(name: str) -> bool:
+    """Same UPPER_CASE rule as the Python parser."""
+    return name.isupper() and name.replace("_", "").isalnum()
+
+
+def _is_async(node: Node) -> bool:
+    return any(c.type == "async" for c in node.children)
+
+
+def _signature(name: str, node: Node) -> str:
+    params = node.child_by_field_name("parameters")
+    if params is not None:
+        params_text = _text(params)
+    else:
+        # Bare-identifier arrow param: `x => x`.
+        bare = node.child_by_field_name("parameter")
+        params_text = f"({_text(bare)})" if bare is not None else "()"
+    ret = node.child_by_field_name("return_type")
+    ret_text = _text(ret) if ret is not None else ""
+    prefix = "async " if _is_async(node) else ""
+    return f"{prefix}{name}{params_text}{ret_text}"
+
+
+def _member_chain(node: Node | None) -> str | None:
+    """Reconstruct a dotted name from member_expression/identifier chains.
+
+    Mirrors python_parser._attr_chain: unresolvable shapes (subscripts,
+    parenthesized expressions, call results) return None — skipped
+    rather than emitted as noise.
+    """
+    if node is None:
+        return None
+    parts: list[str] = []
+    cur: Node | None = node
+    while cur is not None and cur.type == "member_expression":
+        prop = cur.child_by_field_name("property")
+        if prop is None:
+            return None
+        parts.append(_text(prop))
+        cur = cur.child_by_field_name("object")
+    if cur is not None and cur.type in ("identifier", "this"):
+        parts.append(_text(cur))
+        return ".".join(reversed(parts))
+    return None
+
+
 def _extract_children(root: Node, inputs: _ParseInputs) -> list[IngestionUnit]:
-    return []
+    out: list[IngestionUnit] = []
+    parent = inputs.module_qname
+    for node in root.named_children:
+        decl = node
+        if node.type == "export_statement":
+            inner = node.child_by_field_name("declaration")
+            if inner is None:
+                continue  # export clause / re-export — no declaration
+            decl = inner
+        doc = _jsdoc_for(node)  # JSDoc sits above the export wrapper
+        if decl.type in _FUNCTION_DECL_TYPES:
+            out.append(
+                _emit_function(decl, inputs, parent, kind=UnitKind.FUNCTION, docstring=doc)
+            )
+        elif decl.type == "class_declaration":
+            out.extend(_emit_class(decl, inputs, parent, docstring=doc))
+        elif decl.type in _DECL_CONTAINER_TYPES:
+            out.extend(_emit_declarators(decl, inputs, parent, docstring=doc))
+    return out
+
+
+def _emit_declarators(
+    container: Node,
+    inputs: _ParseInputs,
+    parent_qname: str,
+    *,
+    docstring: str | None,
+) -> list[IngestionUnit]:
+    out: list[IngestionUnit] = []
+    for declarator in container.named_children:
+        if declarator.type != "variable_declarator":
+            continue
+        name_node = declarator.child_by_field_name("name")
+        if name_node is None or name_node.type != "identifier":
+            continue  # destructuring patterns — no single unit name
+        name = _text(name_node)
+        value = declarator.child_by_field_name("value")
+        if value is not None and value.type in _FUNCTION_VALUE_TYPES:
+            out.append(
+                _emit_function(
+                    value,
+                    inputs,
+                    parent_qname,
+                    kind=UnitKind.FUNCTION,
+                    docstring=docstring,
+                    name_override=name,
+                    span_node=container,
+                )
+            )
+        elif _is_constant_name(name):
+            line_start = container.start_point.row + 1
+            line_end = container.end_point.row + 1
+            qname = f"{parent_qname}.{name}" if parent_qname else name
+            out.append(
+                _make_unit(
+                    inputs=inputs,
+                    kind=UnitKind.CONSTANT,
+                    name=name,
+                    qualified_name=qname,
+                    parent_qualified_name=parent_qname or None,
+                    line_start=line_start,
+                    line_end=line_end,
+                    content=_slice_source(inputs.source, line_start, line_end),
+                    docstring=None,
+                    signature=None,
+                    imports=[],
+                    calls=[],
+                    references=[],
+                    bases=[],
+                )
+            )
+    return out
+
+
+def _emit_class(
+    cls: Node,
+    inputs: _ParseInputs,
+    parent_qname: str,
+    *,
+    docstring: str | None,
+) -> list[IngestionUnit]:
+    name_node = cls.child_by_field_name("name")
+    if name_node is None:
+        return []
+    name = _text(name_node)
+    qname = f"{parent_qname}.{name}" if parent_qname else name
+
+    # extends targets. JS grammar: class_heritage holds the expression
+    # directly; TS grammar wraps it in extends_clause (+ implements_clause,
+    # which is type-level and deliberately ignored).
+    bases: list[str] = []
+    for child in cls.named_children:
+        if child.type != "class_heritage":
+            continue
+        for h in child.named_children:
+            if h.type == "extends_clause":
+                chain = _member_chain(h.child_by_field_name("value"))
+            elif h.type in ("identifier", "member_expression"):
+                chain = _member_chain(h)
+            else:
+                chain = None
+            if chain:
+                bases.append(chain)
+
+    children: list[IngestionUnit] = []
+    body = cls.child_by_field_name("body")
+    if body is not None:
+        for member in body.named_children:
+            doc = _jsdoc_for(member)
+            if member.type == "method_definition":
+                children.append(
+                    _emit_function(member, inputs, qname, kind=UnitKind.METHOD, docstring=doc)
+                )
+            elif member.type in _FIELD_DEF_TYPES:
+                # JS grammar (field_definition): "name" is NOT a named field —
+                # the property_identifier sits as a positional child.
+                # TS grammar (public_field_definition): "name" IS a named field.
+                fname_node = member.child_by_field_name("name")
+                if fname_node is None:
+                    # Fallback: first named child that is a property_identifier.
+                    fname_node = next(
+                        (c for c in member.named_children if c.type == "property_identifier"),
+                        None,
+                    )
+                value = member.child_by_field_name("value")
+                if fname_node is None:
+                    continue
+                fname = _text(fname_node)
+                if value is not None and value.type in _FUNCTION_VALUE_TYPES:
+                    children.append(
+                        _emit_function(
+                            value,
+                            inputs,
+                            qname,
+                            kind=UnitKind.METHOD,
+                            docstring=doc,
+                            name_override=fname,
+                            span_node=member,
+                        )
+                    )
+                elif _is_constant_name(fname):
+                    line_start = member.start_point.row + 1
+                    line_end = member.end_point.row + 1
+                    children.append(
+                        _make_unit(
+                            inputs=inputs,
+                            kind=UnitKind.CONSTANT,
+                            name=fname,
+                            qualified_name=f"{qname}.{fname}",
+                            parent_qualified_name=qname,
+                            line_start=line_start,
+                            line_end=line_end,
+                            content=_slice_source(inputs.source, line_start, line_end),
+                            docstring=None,
+                            signature=None,
+                            imports=[],
+                            calls=[],
+                            references=[],
+                            bases=[],
+                        )
+                    )
+
+    children.sort(key=lambda u: (u.line_start, u.name))
+
+    line_start = cls.start_point.row + 1
+    line_end = cls.end_point.row + 1
+    cls_unit = _make_unit(
+        inputs=inputs,
+        kind=UnitKind.CLASS,
+        name=name,
+        qualified_name=qname,
+        parent_qualified_name=parent_qname or None,
+        line_start=line_start,
+        line_end=line_end,
+        content=_slice_source(inputs.source, line_start, line_end),
+        docstring=docstring,
+        signature=None,
+        imports=[],
+        calls=[],
+        references=[],
+        bases=bases,
+    )
+    return [cls_unit, *children]
+
+
+def _emit_function(
+    fn: Node,
+    inputs: _ParseInputs,
+    parent_qname: str,
+    *,
+    kind: UnitKind,
+    docstring: str | None,
+    name_override: str | None = None,
+    span_node: Node | None = None,
+) -> IngestionUnit:
+    if name_override is not None:
+        name = name_override
+    else:
+        name_node = fn.child_by_field_name("name")
+        name = _text(name_node) if name_node is not None else "<anonymous>"
+    qname = f"{parent_qname}.{name}" if parent_qname else name
+
+    span = span_node if span_node is not None else fn
+    line_start = span.start_point.row + 1
+    line_end = span.end_point.row + 1
+
+    calls, references = _walk_body(fn)
+
+    return _make_unit(
+        inputs=inputs,
+        kind=kind,
+        name=name,
+        qualified_name=qname,
+        parent_qualified_name=parent_qname or None,
+        line_start=line_start,
+        line_end=line_end,
+        content=_slice_source(inputs.source, line_start, line_end),
+        docstring=docstring,
+        signature=_signature(name, fn),
+        imports=[],
+        calls=calls,
+        references=references,
+        bases=[],
+    )
+
+
+def _walk_body(fn: Node) -> tuple[list[str], list[str]]:
+    """Collect calls + identifier references — filled in by Task 7."""
+    return [], []
 
 
 def _extract_imports(root: Node, inputs: _ParseInputs) -> list[str]:
