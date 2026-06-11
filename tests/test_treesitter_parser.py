@@ -236,3 +236,64 @@ def test_calls_inside_nested_closures_attributed_to_outer_fn() -> None:
     by_qname = {u.qualified_name: u for u in units}
     assert "process" in by_qname["src.app.handler"].calls
     assert "items.forEach" in by_qname["src.app.handler"].calls
+
+
+def test_import_statement_variants() -> None:
+    units = _parse(
+        """
+        import React from "react";
+        import { useState, useEffect as ue } from "react";
+        import * as path from "node:path";
+        import "./styles.css";
+        import { score } from "./scorer";
+        import { deep } from "../shared/util";
+        const fs = require("fs");
+        const local = require("./local");
+        export { helper } from "./util";
+        """,
+        file_path="app/ats/run.js",
+    )
+    module = units[0]
+    assert module.imports == sorted({
+        "react",                    # default import — module only
+        "react.useState",
+        "react.useEffect",          # original name, not the alias
+        "node:path",                # namespace import — module only
+        "app.ats.styles.css",       # side-effect relative import, resolved
+        "app.ats.scorer.score",     # named relative import
+        "app.shared.util.deep",     # ../ resolution
+        "fs",                       # require, bare
+        "app.ats.local",            # require, relative
+        "app.ats.util.helper",      # re-export is an import
+    })
+
+
+def test_relative_import_index_collapse_and_root_escape() -> None:
+    units = _parse(
+        """
+        import { x } from "./utils/index";
+        import { y } from "../../outside";
+        """,
+        file_path="src/app.js",
+    )
+    module = units[0]
+    # ./utils/index collapses; ../../ escapes the repo root — kept verbatim.
+    assert module.imports == sorted({"src.utils.x", "../../outside.y"})
+
+
+def test_bare_specifier_subpath_uses_dots() -> None:
+    units = _parse('import merge from "lodash/merge";\n')
+    assert units[0].imports == ["lodash.merge"]
+
+
+def test_new_expression_recorded_as_call() -> None:
+    units = _parse("""
+        function build() {
+          const svc = new Service();
+          const w = new pkg.Worker(1);
+        }
+    """)
+    by_qname = {u.qualified_name: u for u in units}
+    calls = by_qname["src.app.build"].calls
+    assert "Service" in calls
+    assert "pkg.Worker" in calls

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import posixpath
 import time
 from dataclasses import dataclass
 from functools import lru_cache
@@ -520,14 +521,91 @@ def _walk_body(fn: Node) -> tuple[list[str], list[str]]:
             target = _member_chain(node.child_by_field_name("function"))
             if target:
                 calls.append(target)
+        elif node.type == "new_expression":
+            target = _member_chain(node.child_by_field_name("constructor"))
+            if target:
+                calls.append(target)
         elif node.type == "identifier":
             references.append(_text(node))
         stack.extend(node.named_children)
     return calls, references
 
 
+def _string_value(string_node: Node) -> str:
+    for child in string_node.named_children:
+        if child.type == "string_fragment":
+            return _text(child)
+    return _text(string_node).strip("\"'`")
+
+
+def _normalize_import_source(spec: str, importer_path: str) -> str:
+    """Resolve an import specifier to a dotted module reference.
+
+    Relative specifiers resolve against the importing file to a
+    repo-relative dotted qname (extension stripped, `index` collapsed).
+    Specifiers escaping the repo root are kept verbatim. Bare package
+    specifiers keep their name with `/` -> `.` (subpath imports).
+    """
+    if spec.startswith("."):
+        resolved = posixpath.normpath(
+            posixpath.join(posixpath.dirname(importer_path), spec)
+        )
+        if resolved.startswith(".."):
+            return spec
+        return module_qname_from_path(resolved)
+    return spec.replace("/", ".")
+
+
+def _imported_names(node: Node) -> list[str]:
+    """Per-symbol names for named imports/re-exports; [] = module-only."""
+    names: list[str] = []
+    stack = list(node.named_children)
+    while stack:
+        child = stack.pop()
+        if child.type in ("import_specifier", "export_specifier"):
+            name_node = child.child_by_field_name("name")
+            if name_node is not None:
+                names.append(_text(name_node))
+        elif child.type in ("import_clause", "named_imports", "export_clause"):
+            stack.extend(child.named_children)
+    return names
+
+
 def _extract_imports(root: Node, inputs: _ParseInputs) -> list[str]:
-    return []
+    out: list[str] = []
+    for node in root.named_children:
+        if node.type in ("import_statement", "export_statement"):
+            source = node.child_by_field_name("source")
+            if source is None:
+                continue  # plain export — not an import
+            module = _normalize_import_source(_string_value(source), inputs.file_path)
+            names = _imported_names(node)
+            if names:
+                out.extend(f"{module}.{n}" for n in names)
+            else:
+                out.append(module)
+        elif node.type in _DECL_CONTAINER_TYPES:
+            # const x = require("mod") — CommonJS.
+            for declarator in node.named_children:
+                if declarator.type != "variable_declarator":
+                    continue
+                value = declarator.child_by_field_name("value")
+                if value is None or value.type != "call_expression":
+                    continue
+                fn = value.child_by_field_name("function")
+                if fn is None or _text(fn) != "require":
+                    continue
+                args = value.child_by_field_name("arguments")
+                if args is None:
+                    continue
+                strings = [c for c in args.named_children if c.type == "string"]
+                if len(strings) == 1:
+                    out.append(
+                        _normalize_import_source(
+                            _string_value(strings[0]), inputs.file_path
+                        )
+                    )
+    return out
 
 
 def _make_unit(
