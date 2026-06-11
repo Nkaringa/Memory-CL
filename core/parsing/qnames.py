@@ -19,6 +19,7 @@ def module_qname_from_path(file_path: str) -> str:
         "src/app.js"          -> "src.app"
         "src/utils/index.ts"  -> "src.utils"
         "src/utils/index"     -> "src.utils"   (suffix already stripped)
+        "index.js"            -> "index"      (no collapse at repo root)
 
     `__init__` collapse applies only to Python files; `index` collapse
     applies only to JS/TS files (and suffixless paths, which only the
@@ -32,7 +33,7 @@ def module_qname_from_path(file_path: str) -> str:
             is_python = suffix == ".py"
             break
     parts = stem_path.split("/")
-    if parts and (
+    if len(parts) > 1 and (
         (is_python and parts[-1] == "__init__")
         or (not is_python and parts[-1] == "index")
     ):

@@ -26,3 +26,8 @@ def test_suffixless_paths_collapse_index() -> None:
     # Import-resolution calls this with already-stripped paths.
     assert module_qname_from_path("src/utils/index") == "src.utils"
     assert module_qname_from_path("src/utils") == "src.utils"
+
+
+def test_root_level_index_and_init_do_not_collapse_to_empty() -> None:
+    assert module_qname_from_path("index.js") == "index"
+    assert module_qname_from_path("__init__.py") == "__init__"
