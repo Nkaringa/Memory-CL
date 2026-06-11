@@ -206,3 +206,33 @@ def test_js_private_field_method_extracted() -> None:
     """)
     by_qname = {u.qualified_name: u for u in units}
     assert by_qname["src.app.P.#hidden"].kind == UnitKind.METHOD
+
+
+def test_calls_and_references_extracted() -> None:
+    units = _parse("""
+        function run(input) {
+          const user = fetchUser(input);
+          api.client.refresh(user);
+          this.helper();
+          obj["dynamic"]();
+          return user;
+        }
+    """)
+    by_qname = {u.qualified_name: u for u in units}
+    run = by_qname["src.app.run"]
+    # Dotted chains reconstructed; unresolvable subscript call skipped.
+    assert run.calls == sorted({"fetchUser", "api.client.refresh", "this.helper"})
+    # Identifier references include params and locals (validator dedupes+sorts).
+    assert "input" in run.references
+    assert "user" in run.references
+
+
+def test_calls_inside_nested_closures_attributed_to_outer_fn() -> None:
+    units = _parse("""
+        const handler = () => {
+          items.forEach(item => process(item));
+        };
+    """)
+    by_qname = {u.qualified_name: u for u in units}
+    assert "process" in by_qname["src.app.handler"].calls
+    assert "items.forEach" in by_qname["src.app.handler"].calls

@@ -502,8 +502,28 @@ def _emit_function(
 
 
 def _walk_body(fn: Node) -> tuple[list[str], list[str]]:
-    """Collect calls + identifier references — filled in by Task 7."""
-    return [], []
+    """Collect call targets + identifier references in a function subtree.
+
+    Mirrors python_parser._emit_function's ast.walk: nested closures are
+    NOT separate units, so their calls attribute to the enclosing
+    function. Method bodies are walked when their method is emitted.
+    """
+    calls: list[str] = []
+    references: list[str] = []
+    body = fn.child_by_field_name("body")
+    if body is None:
+        return calls, references
+    stack: list[Node] = [body]
+    while stack:
+        node = stack.pop()
+        if node.type == "call_expression":
+            target = _member_chain(node.child_by_field_name("function"))
+            if target:
+                calls.append(target)
+        elif node.type == "identifier":
+            references.append(_text(node))
+        stack.extend(node.named_children)
+    return calls, references
 
 
 def _extract_imports(root: Node, inputs: _ParseInputs) -> list[str]:
