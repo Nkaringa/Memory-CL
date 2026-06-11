@@ -180,3 +180,29 @@ def test_children_sorted_by_line() -> None:
     rest = units[1:]
     starts = [u.line_start for u in rest]
     assert starts == sorted(starts)
+
+
+def test_abstract_class_extracted() -> None:
+    units = _parse(
+        """
+        abstract class Base {
+          handle(req: Request): void {}
+        }
+        export abstract class Exported {}
+        """,
+        file_path="src/abs.ts",
+    )
+    by_qname = {u.qualified_name: u for u in units}
+    assert by_qname["src.abs.Base"].kind == UnitKind.CLASS
+    assert by_qname["src.abs.Base.handle"].kind == UnitKind.METHOD
+    assert by_qname["src.abs.Exported"].kind == UnitKind.CLASS
+
+
+def test_js_private_field_method_extracted() -> None:
+    units = _parse("""
+        class P {
+          #hidden = () => 1;
+        }
+    """)
+    by_qname = {u.qualified_name: u for u in units}
+    assert by_qname["src.app.P.#hidden"].kind == UnitKind.METHOD

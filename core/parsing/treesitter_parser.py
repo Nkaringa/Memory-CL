@@ -100,6 +100,10 @@ _FIELD_DEF_TYPES = frozenset({
     "field_definition",          # JS grammar
     "public_field_definition",   # TS grammar
 })
+_CLASS_DECL_TYPES = frozenset({
+    "class_declaration",
+    "abstract_class_declaration",  # TS grammar — `abstract class A {}`
+})
 
 
 def _module_docstring(root: Node) -> str | None:
@@ -291,7 +295,7 @@ def _extract_children(root: Node, inputs: _ParseInputs) -> list[IngestionUnit]:
             out.append(
                 _emit_function(decl, inputs, parent, kind=UnitKind.FUNCTION, docstring=doc)
             )
-        elif decl.type == "class_declaration":
+        elif decl.type in _CLASS_DECL_TYPES:
             out.extend(_emit_class(decl, inputs, parent, docstring=doc))
         elif decl.type in _DECL_CONTAINER_TYPES:
             out.extend(_emit_declarators(decl, inputs, parent, docstring=doc))
@@ -391,16 +395,10 @@ def _emit_class(
                     _emit_function(member, inputs, qname, kind=UnitKind.METHOD, docstring=doc)
                 )
             elif member.type in _FIELD_DEF_TYPES:
-                # JS grammar (field_definition): "name" is NOT a named field —
-                # the property_identifier sits as a positional child.
-                # TS grammar (public_field_definition): "name" IS a named field.
-                fname_node = member.child_by_field_name("name")
-                if fname_node is None:
-                    # Fallback: first named child that is a property_identifier.
-                    fname_node = next(
-                        (c for c in member.named_children if c.type == "property_identifier"),
-                        None,
-                    )
+                # Grammar asymmetry: TS's public_field_definition exposes the
+                # field name under `name`; JS's field_definition exposes it
+                # under `property` (which also covers #private names).
+                fname_node = member.child_by_field_name("name") or member.child_by_field_name("property")
                 value = member.child_by_field_name("value")
                 if fname_node is None:
                     continue
