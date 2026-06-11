@@ -31,3 +31,16 @@ def test_suffixless_paths_collapse_index() -> None:
 def test_root_level_index_and_init_do_not_collapse_to_empty() -> None:
     assert module_qname_from_path("index.js") == "index"
     assert module_qname_from_path("__init__.py") == "__init__"
+
+
+def test_graph_builder_mirror_stays_in_sync() -> None:
+    """graph_builder inlines a mirror of module_qname_from_path on purpose
+    (narrow import surface). This test fails if the two ever drift."""
+    from core.ingestion.graph_builder import _module_qname
+
+    for path in (
+        "pkg/mod.py", "pkg/__init__.py", "pkg/index.py",
+        "src/app.js", "src/utils/index.ts", "src/components/Button.tsx",
+        "lib/loader.cjs", "top.py", "index.js", "__init__.py",
+    ):
+        assert _module_qname(path) == module_qname_from_path(path), path
