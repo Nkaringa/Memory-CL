@@ -263,9 +263,18 @@ def test_inline_mod_nests_qnames_one_level() -> None:
         mod declared_elsewhere;
     """)
     by_qname = {u.qualified_name: u for u in units}
-    assert by_qname["src.geometry.inner.nested_fn"].kind == UnitKind.FUNCTION
-    assert by_qname["src.geometry.inner.INNER_C"].kind == UnitKind.CONSTANT
-    assert by_qname["src.geometry.inner.InnerS"].kind == UnitKind.CLASS
+    nested_fn = by_qname["src.geometry.inner.nested_fn"]
+    assert nested_fn.kind == UnitKind.FUNCTION
+    inner_c = by_qname["src.geometry.inner.INNER_C"]
+    assert inner_c.kind == UnitKind.CONSTANT
+    inner_s = by_qname["src.geometry.inner.InnerS"]
+    assert inner_s.kind == UnitKind.CLASS
+    # Mods emit no unit, so mod-nested items parent on the file's MODULE
+    # (a mod-qname parent could never resolve to a node, and EDGE_RULES
+    # only allows Module-DEFINES->{Class,Function,Constant} here anyway).
+    assert nested_fn.parent_qualified_name == "src.geometry"
+    assert inner_c.parent_qualified_name == "src.geometry"
+    assert inner_s.parent_qualified_name == "src.geometry"
     # One level of nesting only (parity with Python's class-in-module).
     assert not any("too_deep" in q for q in by_qname)
     # `mod x;` declarations have no body — nothing to emit.
@@ -425,4 +434,6 @@ def test_fixture_report_units() -> None:
     assert "render" in by_qname["report.build_report"].calls
     assert "HashMap.new" in by_qname["report.build_report"].calls
     assert by_qname["report.REPORT_TITLE"].kind == UnitKind.CONSTANT
-    assert by_qname["report.summary.count"].kind == UnitKind.FUNCTION
+    count = by_qname["report.summary.count"]
+    assert count.kind == UnitKind.FUNCTION
+    assert count.parent_qualified_name == "report"  # mod-nested -> module

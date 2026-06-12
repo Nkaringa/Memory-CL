@@ -21,8 +21,9 @@ Verified grammar facts (tree-sitter-rust 0.24.2, probed empirically):
   ALL of them become CONSTANT — the keyword is explicit, so the
   UPPER_CASE name heuristic is unnecessary.
 - ``mod_item``: fields ``name`` + ``body`` for inline ``mod x { ... }``
-  blocks (descended one level, qnames nest); declaration-only
-  ``mod x;`` has no ``body`` field and is skipped.
+  blocks (descended one level, qnames nest; items inside still parent on
+  the file's MODULE because mods emit no unit — see ``_extract_scope``);
+  declaration-only ``mod x;`` has no ``body`` field and is skipped.
 - ``use_declaration``: field ``argument`` -> identifier |
   scoped_identifier(path, name) | scoped_use_list(path, list->use_list)
   | use_list | use_wildcard (path as sole named child) |
@@ -229,15 +230,17 @@ def _fn_signature(name: str, fn: Node) -> str:
 def _emit_function(
     fn: Node,
     inputs: _ParseInputs,
-    parent_qname: str,
+    qname_prefix: str,
     *,
     kind: UnitKind,
+    parent_qname: str | None = None,
 ) -> IngestionUnit | None:
     name_node = fn.child_by_field_name("name")
     if name_node is None:
         return None
     name = _text(name_node)
-    qname = f"{parent_qname}.{name}" if parent_qname else name
+    qname = f"{qname_prefix}.{name}" if qname_prefix else name
+    parent = parent_qname if parent_qname is not None else qname_prefix
     line_start = fn.start_point.row + 1
     line_end = fn.end_point.row + 1
     calls, references = _walk_body(fn)
@@ -246,7 +249,7 @@ def _emit_function(
         kind=kind,
         name=name,
         qualified_name=qname,
-        parent_qualified_name=parent_qname or None,
+        parent_qualified_name=parent or None,
         line_start=line_start,
         line_end=line_end,
         content=_slice_source(inputs.source, line_start, line_end),
@@ -262,20 +265,23 @@ def _emit_function(
 def _emit_constant(
     decl: Node,
     inputs: _ParseInputs,
-    parent_qname: str,
+    qname_prefix: str,
+    *,
+    parent_qname: str | None = None,
 ) -> IngestionUnit | None:
     name_node = decl.child_by_field_name("name")
     if name_node is None:
         return None
     name = _text(name_node)
+    parent = parent_qname if parent_qname is not None else qname_prefix
     line_start = decl.start_point.row + 1
     line_end = decl.end_point.row + 1
     return _make_unit(
         inputs=inputs,
         kind=UnitKind.CONSTANT,
         name=name,
-        qualified_name=f"{parent_qname}.{name}" if parent_qname else name,
-        parent_qualified_name=parent_qname or None,
+        qualified_name=f"{qname_prefix}.{name}" if qname_prefix else name,
+        parent_qualified_name=parent or None,
         line_start=line_start,
         line_end=line_end,
         content=_slice_source(inputs.source, line_start, line_end),
@@ -291,14 +297,17 @@ def _emit_constant(
 def _emit_type_decl(
     decl: Node,
     inputs: _ParseInputs,
-    parent_qname: str,
+    qname_prefix: str,
     bases: list[str],
+    *,
+    parent_qname: str | None = None,
 ) -> list[IngestionUnit]:
     name_node = decl.child_by_field_name("name")
     if name_node is None:
         return []
     name = _text(name_node)
-    qname = f"{parent_qname}.{name}" if parent_qname else name
+    qname = f"{qname_prefix}.{name}" if qname_prefix else name
+    parent = parent_qname if parent_qname is not None else qname_prefix
 
     children: list[IngestionUnit] = []
     if decl.type == "trait_item":
@@ -315,7 +324,7 @@ def _emit_type_decl(
         kind=UnitKind.CLASS,
         name=name,
         qualified_name=qname,
-        parent_qualified_name=parent_qname or None,
+        parent_qualified_name=parent or None,
         line_start=line_start,
         line_end=line_end,
         content=_slice_source(inputs.source, line_start, line_end),
@@ -360,10 +369,17 @@ def _emit_members(
 def _extract_scope(
     container: Node,
     inputs: _ParseInputs,
-    parent_qname: str,
+    qname_prefix: str,
     *,
     depth: int,
 ) -> list[IngestionUnit]:
+    # Items emitted at scope level always parent on the file's MODULE,
+    # even inside inline `mod x {}` blocks: the mod emits no unit, so a
+    # mod-qname parent could never resolve to a node (orphaning the item
+    # from Module-DEFINES), and EDGE_RULES has no rule that would allow
+    # it anyway. Qnames still nest through the mod (`file.x.item`), so
+    # no information is lost.
+    module_parent = inputs.module_qname
     # Pass 1: trait impls in this scope -> bases for the impl'd types,
     # merged into the type's CLASS unit when it is declared right here.
     trait_bases: dict[str, list[str]] = {}
@@ -382,22 +398,30 @@ def _extract_scope(
     out: list[IngestionUnit] = []
     for node in container.named_children:
         if node.type == "function_item":
-            unit = _emit_function(node, inputs, parent_qname, kind=UnitKind.FUNCTION)
+            unit = _emit_function(
+                node,
+                inputs,
+                qname_prefix,
+                kind=UnitKind.FUNCTION,
+                parent_qname=module_parent,
+            )
             if unit is not None:
                 out.append(unit)
         elif node.type in _TYPE_DECL_TYPES:
             name_node = node.child_by_field_name("name")
             bases = trait_bases.get(_text(name_node), []) if name_node is not None else []
-            out.extend(_emit_type_decl(node, inputs, parent_qname, bases))
+            out.extend(
+                _emit_type_decl(node, inputs, qname_prefix, bases, parent_qname=module_parent)
+            )
         elif node.type in _CONST_DECL_TYPES:
-            unit = _emit_constant(node, inputs, parent_qname)
+            unit = _emit_constant(node, inputs, qname_prefix, parent_qname=module_parent)
             if unit is not None:
                 out.append(unit)
         elif node.type == "impl_item":
             type_name = _impl_type_name(node)
             body = node.child_by_field_name("body")
             if type_name and body is not None:
-                type_qname = f"{parent_qname}.{type_name}" if parent_qname else type_name
+                type_qname = f"{qname_prefix}.{type_name}" if qname_prefix else type_name
                 out.extend(_emit_members(body, inputs, type_qname))
         elif node.type == "mod_item" and depth == 0:
             # Inline `mod x { ... }` — descend one level, qnames nest.
@@ -406,7 +430,7 @@ def _extract_scope(
             body = node.child_by_field_name("body")
             if name_node is not None and body is not None:
                 mod_qname = (
-                    f"{parent_qname}.{_text(name_node)}" if parent_qname else _text(name_node)
+                    f"{qname_prefix}.{_text(name_node)}" if qname_prefix else _text(name_node)
                 )
                 out.extend(_extract_scope(body, inputs, mod_qname, depth=depth + 1))
     return out

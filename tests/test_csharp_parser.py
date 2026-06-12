@@ -159,8 +159,13 @@ def test_nested_class() -> None:
     by_qname = {u.qualified_name: u for u in units}
     inner = by_qname["src.app.Outer.Inner"]
     assert inner.kind == UnitKind.CLASS
-    assert inner.parent_qualified_name == "src.app.Outer"
-    assert by_qname["src.app.Outer.Inner.Go"].kind == UnitKind.METHOD
+    # EDGE_RULES forbids Class-DEFINES->Class: nested types keep the
+    # nested qname but parent on the MODULE.
+    assert inner.parent_qualified_name == "src.app"
+    go = by_qname["src.app.Outer.Inner.Go"]
+    assert go.kind == UnitKind.METHOD
+    # Members still parent on the (nested) class itself.
+    assert go.parent_qualified_name == "src.app.Outer.Inner"
 
 
 # ---------------------------------------------------------------------------
@@ -192,25 +197,26 @@ def test_methods_constructors_and_signatures() -> None:
     assert by_qname["src.app.Svc.Twice"].parent_qualified_name == "src.app.Svc"
 
 
-def test_local_function_is_function_under_method() -> None:
+def test_local_function_folds_into_enclosing_method() -> None:
     units = _parse("""
         public class Calc
         {
             public double Area(double r)
             {
-                double Square(double x) { return x * x; }
+                double Square(double x) { return Helper(x) * x; }
                 return 3.14 * Square(r);
             }
         }
     """)
     by_qname = {u.qualified_name: u for u in units}
-    local = by_qname["src.app.Calc.Area.Square"]
-    assert local.kind == UnitKind.FUNCTION
-    assert local.parent_qualified_name == "src.app.Calc.Area"
-    assert local.signature == "Square(double x) -> double"
-    # The local function's body is a boundary: its calls/refs do not leak
-    # into the enclosing method, but the *call to it* does.
-    assert by_qname["src.app.Calc.Area"].calls == ["Square"]
+    # Python parity: local functions are NOT units (emitting them would
+    # also create the EDGE_RULES-forbidden Method-DEFINES->Function edge).
+    assert "src.app.Calc.Area.Square" not in by_qname
+    # Their calls/references attribute to the enclosing method instead:
+    # both the call *to* Square and the calls *inside* Square land on Area.
+    area = by_qname["src.app.Calc.Area"]
+    assert area.calls == sorted({"Helper", "Square"})
+    assert "Square" in area.references
 
 
 def test_interface_methods_emitted_without_bodies() -> None:
@@ -507,12 +513,14 @@ def test_fixture_shapes_file() -> None:
     area = by_qname["Geometry.Shapes.Circle.Area"]
     assert area.docstring == "Computes the area.\narea in square units"
     assert area.calls == ["Square"]
-    square = by_qname["Geometry.Shapes.Circle.Area.Square"]
-    assert square.kind == UnitKind.FUNCTION
+    # Local functions are not units; Square's body folds into Area.
+    assert "Geometry.Shapes.Circle.Area.Square" not in by_qname
     assert by_qname["Geometry.Shapes.Circle.Diameter"].kind == UnitKind.METHOD
     assert by_qname["Geometry.Shapes.Circle.Radius"].calls == ["Clamp"]
     assert "Geometry.Shapes.Circle.Label" not in by_qname  # auto-property
-    assert by_qname["Geometry.Shapes.Circle.Cache"].kind == UnitKind.CLASS
+    cache = by_qname["Geometry.Shapes.Circle.Cache"]
+    assert cache.kind == UnitKind.CLASS
+    assert cache.parent_qualified_name == "Geometry.Shapes"  # nested -> module
     assert by_qname["Geometry.Shapes.Circle.Cache.Clear"].kind == UnitKind.METHOD
 
 

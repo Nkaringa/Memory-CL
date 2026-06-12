@@ -68,6 +68,10 @@ _PORTS = (55432, 57687, 56333, 56379)
 
 FIXTURE_PY = Path(__file__).parent.parent / "fixtures" / "sample_repo"
 FIXTURE_JS = Path(__file__).parent.parent / "fixtures" / "sample_repo_js"
+FIXTURE_CSHARP = Path(__file__).parent.parent / "fixtures" / "sample_repo_csharp"
+FIXTURE_GO = Path(__file__).parent.parent / "fixtures" / "sample_repo_go"
+FIXTURE_JAVA = Path(__file__).parent.parent / "fixtures" / "sample_repo_java"
+FIXTURE_RUST = Path(__file__).parent.parent / "fixtures" / "sample_repo_rust"
 
 COMMIT_SHA = "feedfacefeedfacefeedfacefeedfacefeedface"
 
@@ -163,6 +167,10 @@ def _expected_units(repo_path: Path, repo_id: str) -> list[IngestionUnit]:
         Language.PYTHON: PythonParser(),
         Language.JAVASCRIPT: TreeSitterParser(Language.JAVASCRIPT),
         Language.TYPESCRIPT: TreeSitterParser(Language.TYPESCRIPT),
+        Language.CSHARP: TreeSitterParser(Language.CSHARP),
+        Language.GO: TreeSitterParser(Language.GO),
+        Language.JAVA: TreeSitterParser(Language.JAVA),
+        Language.RUST: TreeSitterParser(Language.RUST),
     }
     walk = FileWalker().walk(repo_path, repo_id=repo_id)
     units: list[IngestionUnit] = []
@@ -179,9 +187,7 @@ def _expected_units(repo_path: Path, repo_id: str) -> list[IngestionUnit]:
     return units
 
 
-async def _ingest(
-    stores: Stores, repo_id: str, repo_path: Path
-) -> tuple[str, IngestionResult]:
+async def _ingest(stores: Stores, repo_id: str, repo_path: Path) -> tuple[str, IngestionResult]:
     """Mirror apps/api/routers/ingest.py: ensure collection, run pipeline."""
     collection = f"repo_{repo_id}"
     await stores.vector_repo.ensure_collection(collection, VECTOR_SIZE)
@@ -244,9 +250,7 @@ async def _cleanup(stores: Stores, repo_id: str, collection: str) -> None:
             {"repo_id": repo_id},
         )
     async with stores.neo4j.driver.session() as session:
-        await session.run(
-            "MATCH (n {repo_id: $repo_id}) DETACH DELETE n", {"repo_id": repo_id}
-        )
+        await session.run("MATCH (n {repo_id: $repo_id}) DETACH DELETE n", {"repo_id": repo_id})
     if await stores.qdrant.client.collection_exists(collection_name=collection):
         await stores.qdrant.client.delete_collection(collection_name=collection)
 
@@ -284,9 +288,7 @@ async def test_golden_python_repo_roundtrip(stores: Stores) -> None:
         # query_graph-equivalent: GraphRetriever over the REAL Neo4j repo,
         # seeded by a qname known to exist in the fixture. unit_id is
         # deterministic (sha256 of repo:path:qname), so no lookup needed.
-        login_id = stable_unit_id(
-            repo_id, "pkg/services/auth.py", "pkg.services.auth.login"
-        )
+        login_id = stable_unit_id(repo_id, "pkg/services/auth.py", "pkg.services.auth.login")
         neighbors = await stores.graph_repo.neighbors(login_id, depth=2)
         assert neighbors, "neighbors() returned nothing for pkg.services.auth.login"
 
@@ -348,5 +350,100 @@ async def test_golden_js_ts_repo_roundtrip(stores: Stores) -> None:
         assert again.metrics["units_changed"] == 0
         assert await _pg_unit_count(stores, repo_id) == len(expected)
         assert await _neo4j_counts(stores, repo_id) == (nodes, edges)
+    finally:
+        await _cleanup(stores, repo_id, collection)
+
+
+# ---------------------------------------------------------------------------
+# Batch-2 language round-trips (C#, Go, Java, Rust)
+# ---------------------------------------------------------------------------
+# Each entry: (short_tag, fixture_path, known_qname, file_path_for_id)
+#
+# The qname seeds are chosen because the method/function is defined in the
+# same file as its parent type, guaranteeing at least one neighbour edge.
+#
+#   C#   : Geometry/Shapes.cs  -> Circle class -> Circle.Area method
+#   Go   : server/handler.go   -> Handler struct -> Handler.Greet method
+#   Java : Dog.java            -> Dog class -> Dog.speak method
+#   Rust : geometry.rs         -> Point struct -> Point.origin method
+#
+# All qnames are path-based (design D-16) — no package/namespace prefix.
+_BATCH2_CASES: list[tuple[str, Path, str, str, str]] = [
+    (
+        "cs",
+        FIXTURE_CSHARP,
+        "Geometry.Shapes.Circle.Area",
+        "Geometry/Shapes.cs",
+        "Geometry.Shapes.Circle.Area",
+    ),
+    (
+        "go",
+        FIXTURE_GO,
+        "server.handler.Handler.Greet",
+        "server/handler.go",
+        "server.handler.Handler.Greet",
+    ),
+    (
+        "java",
+        FIXTURE_JAVA,
+        "Dog.Dog.speak",
+        "Dog.java",
+        "Dog.Dog.speak",
+    ),
+    (
+        "rust",
+        FIXTURE_RUST,
+        "geometry.Point.origin",
+        "geometry.rs",
+        "geometry.Point.origin",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "tag,fixture_path,anchor_qname,anchor_file,anchor_qname_for_id",
+    _BATCH2_CASES,
+    ids=[c[0] for c in _BATCH2_CASES],
+)
+async def test_golden_batch2_language_roundtrip(
+    stores: Stores,
+    tag: str,
+    fixture_path: Path,
+    anchor_qname: str,
+    anchor_file: str,
+    anchor_qname_for_id: str,
+) -> None:
+    """Ingest a single-language fixture repo through the REAL pipeline and
+    assert: no failures, parser==Postgres==Qdrant unit count, Neo4j has
+    nodes+edges, and a known qname resolves to non-empty neighbours."""
+    repo_id = f"golden-{tag}-{os.getpid()}"
+    collection = f"repo_{repo_id}"
+    try:
+        collection, result = await _ingest(stores, repo_id, fixture_path)
+        assert result.failed_files == (), (
+            f"{tag}: pipeline reported failures: {result.failed_files}"
+        )
+
+        expected = _expected_units(fixture_path, repo_id)
+        assert len(expected) > 0, f"{tag}: parser produced zero units"
+
+        pg_count = await _pg_unit_count(stores, repo_id)
+        qdrant_count = await _qdrant_point_count(stores, collection)
+        assert pg_count == len(expected), (
+            f"{tag}: Postgres count {pg_count} != parser count {len(expected)}"
+        )
+        assert qdrant_count == len(expected), (
+            f"{tag}: Qdrant count {qdrant_count} != parser count {len(expected)}"
+        )
+
+        nodes, edges = await _neo4j_counts(stores, repo_id)
+        assert nodes > 0, f"{tag}: Neo4j has no nodes"
+        assert edges > 0, f"{tag}: Neo4j has no edges"
+
+        # Graph traversal: the anchor qname must resolve to at least one
+        # neighbour (the parent type or a sibling member shares a File node).
+        anchor_id = stable_unit_id(repo_id, anchor_file, anchor_qname_for_id)
+        neighbours = await stores.graph_repo.neighbors(anchor_id, depth=2)
+        assert neighbours, f"{tag}: neighbors() returned nothing for {anchor_qname_for_id!r}"
     finally:
         await _cleanup(stores, repo_id, collection)

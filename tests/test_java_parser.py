@@ -258,10 +258,15 @@ def test_nested_classes_flatten_onto_qname_chain() -> None:
     by_qname = {u.qualified_name: u for u in units}
     inner = by_qname["src.App.Outer.Inner"]
     assert inner.kind == UnitKind.CLASS
-    assert inner.parent_qualified_name == "src.App.Outer"
-    assert by_qname["src.App.Outer.Inner.run"].kind == UnitKind.METHOD
+    # EDGE_RULES forbids Class-DEFINES->Class: nested types keep the
+    # nested qname but parent on the MODULE.
+    assert inner.parent_qualified_name == "src.App"
+    run = by_qname["src.App.Outer.Inner.run"]
+    assert run.kind == UnitKind.METHOD
+    # Members still parent on the (nested) class itself.
+    assert run.parent_qualified_name == "src.App.Outer.Inner"
     deepest = by_qname["src.App.Outer.Inner.Deepest"]
-    assert deepest.parent_qualified_name == "src.App.Outer.Inner"
+    assert deepest.parent_qualified_name == "src.App"
 
 
 def test_import_variants_single_wildcard_static() -> None:
@@ -410,7 +415,9 @@ def test_fixture_dog_java() -> None:
     assert speak.signature == "speak(): String"
     assert speak.docstring == "What the dog says."
     assert "SOUND.toUpperCase" in speak.calls
-    assert by_qname["Dog.Dog.Collar"].kind == UnitKind.CLASS
+    collar = by_qname["Dog.Dog.Collar"]
+    assert collar.kind == UnitKind.CLASS
+    assert collar.parent_qualified_name == "Dog"  # nested type -> module
     assert by_qname["Dog.Dog.Collar.tighten"].kind == UnitKind.METHOD
 
 

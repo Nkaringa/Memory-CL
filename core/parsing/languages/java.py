@@ -208,12 +208,16 @@ def _emit_type(
 
     line_start = decl.start_point.row + 1
     line_end = decl.end_point.row + 1
+    # EDGE_RULES forbids Class-DEFINES->Class, so nested types parent on
+    # the MODULE, not the enclosing type. The qualified_name still encodes
+    # the nesting (`pkg.Dog.Collar`), so no information is lost — the
+    # structural edge just stays the legal Module-DEFINES->Class.
     type_unit = _make_unit(
         inputs=inputs,
         kind=UnitKind.CLASS,
         name=name,
         qualified_name=qname,
-        parent_qualified_name=parent_qname or None,
+        parent_qualified_name=inputs.module_qname or None,
         line_start=line_start,
         line_end=line_end,
         content=_slice_source(inputs.source, line_start, line_end),

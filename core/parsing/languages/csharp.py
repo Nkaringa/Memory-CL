@@ -46,7 +46,11 @@ from a MonoBehaviour-heavy game project):
   "readonly"/...), then ``variable_declaration`` ->
   ``variable_declarator`` (field ``name``).
 - ``local_function_statement``: fields ``type``, ``name``,
-  ``parameters``, ``body``.
+  ``parameters``, ``body``. NOT emitted as units (Python parity — a
+  ``def`` nested in a function body is no unit either): their bodies are
+  walked as part of the enclosing method, so their calls/references
+  attribute to it. Emitting them would also produce the EDGE_RULES-
+  forbidden Method-DEFINES->Function structural edge.
 - ``invocation_expression``: fields ``function``, ``arguments``. The
   function is ``identifier`` | ``generic_name`` (``GetComponent<T>()``,
   reconstructed as just "GetComponent") | ``member_access_expression``
@@ -247,12 +251,16 @@ def _emit_type(
 
     line_start = decl.start_point.row + 1
     line_end = decl.end_point.row + 1
+    # EDGE_RULES forbids Class-DEFINES->Class, so nested types parent on
+    # the MODULE, not the enclosing type. The qualified_name still encodes
+    # the nesting (`mod.Outer.Inner`), so no information is lost — the
+    # structural edge just stays the legal Module-DEFINES->Class.
     type_unit = _make_unit(
         inputs=inputs,
         kind=UnitKind.CLASS,
         name=name,
         qualified_name=qname,
-        parent_qualified_name=parent_qname or None,
+        parent_qualified_name=inputs.module_qname or None,
         line_start=line_start,
         line_end=line_end,
         content=_slice_source(inputs.source, line_start, line_end),
@@ -280,9 +288,9 @@ def _cs_signature(name: str, node: Node) -> str:
     tp_text = _text(type_params) if type_params is not None else ""
     params = node.child_by_field_name("parameters")
     params_text = _text(params) if params is not None else "()"
-    # method_declaration exposes the return type as `returns`;
-    # local_function_statement exposes it as `type`.
-    ret = node.child_by_field_name("returns") or node.child_by_field_name("type")
+    # method_declaration exposes the return type as `returns`
+    # (constructors have neither field — no suffix).
+    ret = node.child_by_field_name("returns")
     ret_text = f" -> {_text(ret)}" if ret is not None else ""
     return f"{prefix}{name}{tp_text}{params_text}{ret_text}"
 
@@ -294,12 +302,12 @@ def _emit_callable(
     *,
     kind: UnitKind,
 ) -> list[IngestionUnit]:
-    """A method/constructor/local function plus any nested local functions."""
+    """A method or constructor declaration."""
     name_node = fn.child_by_field_name("name")
     name = _text(name_node) if name_node is not None else "<anonymous>"
     qname = f"{parent_qname}.{name}" if parent_qname else name
 
-    calls, references, local_fns = _walk_body(fn.child_by_field_name("body"))
+    calls, references = _walk_body(fn.child_by_field_name("body"))
 
     line_start = fn.start_point.row + 1
     line_end = fn.end_point.row + 1
@@ -319,10 +327,7 @@ def _emit_callable(
         references=references,
         bases=[],
     )
-    out = [unit]
-    for local_fn in local_fns:
-        out.extend(_emit_callable(local_fn, inputs, qname, kind=UnitKind.FUNCTION))
-    return out
+    return [unit]
 
 
 def _emit_property(
@@ -350,12 +355,10 @@ def _emit_property(
     qname = f"{parent_qname}.{name}" if parent_qname else name
     calls: list[str] = []
     references: list[str] = []
-    local_fns: list[Node] = []
     for body in bodies:
-        c, r, lf = _walk_subtree(body)
+        c, r = _walk_subtree(body)
         calls.extend(c)
         references.extend(r)
-        local_fns.extend(lf)
 
     prop_type = member.child_by_field_name("type")
     signature = f"{name} -> {_text(prop_type)}" if prop_type is not None else name
@@ -378,10 +381,7 @@ def _emit_property(
         references=references,
         bases=[],
     )
-    out = [unit]
-    for local_fn in local_fns:
-        out.extend(_emit_callable(local_fn, inputs, qname, kind=UnitKind.FUNCTION))
-    return out
+    return [unit]
 
 
 def _emit_fields(
@@ -434,28 +434,24 @@ def _emit_fields(
     return out
 
 
-def _walk_body(body: Node | None) -> tuple[list[str], list[str], list[Node]]:
+def _walk_body(body: Node | None) -> tuple[list[str], list[str]]:
     if body is None:
-        return [], [], []
+        return [], []
     return _walk_subtree(body)
 
 
-def _walk_subtree(body: Node) -> tuple[list[str], list[str], list[Node]]:
-    """Calls + identifier references + local-function boundaries in a body.
+def _walk_subtree(body: Node) -> tuple[list[str], list[str]]:
+    """Calls + identifier references in a body subtree.
 
-    Local functions are emitted as their own FUNCTION units, so their
-    subtrees are NOT descended here — their calls attribute to them
-    (unlike JS closures, which fold into the enclosing function).
+    Local functions are NOT separate units (Python parity; see module
+    docstring), so the walk descends into them — their calls/references
+    attribute to the enclosing method, same as JS closures.
     """
     calls: list[str] = []
     references: list[str] = []
-    local_fns: list[Node] = []
     stack: list[Node] = [body]
     while stack:
         node = stack.pop()
-        if node.type == "local_function_statement":
-            local_fns.append(node)
-            continue
         if node.type == "invocation_expression":
             target = _dotted(node.child_by_field_name("function"))
             if target:
@@ -467,7 +463,7 @@ def _walk_subtree(body: Node) -> tuple[list[str], list[str], list[Node]]:
         elif node.type == "identifier":
             references.append(_text(node))
         stack.extend(node.named_children)
-    return calls, references, local_fns
+    return calls, references
 
 
 # ---------------------------------------------------------------------------
