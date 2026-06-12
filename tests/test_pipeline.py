@@ -221,3 +221,49 @@ async def test_pipeline_is_deterministic(tmp_path: Path) -> None:
     second = captured_runs[half:]
     for a, b in zip(first, second, strict=True):
         assert [n.node_id for n in a] == [n.node_id for n in b]
+
+
+def _make_polyglot_repo(tmp_path: Path) -> Path:
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "tool.py").write_text("def py_fn():\n    return 1\n")
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "app.js").write_text(
+        'import { score } from "./scorer";\n'
+        "export const run = (x) => score(x);\n"
+    )
+    (tmp_path / "web" / "scorer.ts").write_text(
+        "export function score(x: number): number { return x; }\n"
+    )
+    (tmp_path / "web" / "types.d.ts").write_text("declare const v: number;\n")
+    (tmp_path / "web" / "style.css").write_text("body {}\n")
+    return tmp_path
+
+
+@pytest.mark.asyncio
+async def test_pipeline_parses_python_and_js_ts(tmp_path: Path) -> None:
+    repo_path = _make_polyglot_repo(tmp_path)
+    units_repo = _fake_units_repo()
+    captured: list = []
+    units_repo.upsert_units = AsyncMock(
+        side_effect=lambda units: captured.append(list(units)) or len(list(units))
+    )
+
+    ctx = make_context(
+        repo_id="r1",
+        repo_path=repo_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=units_repo,
+        graph_repo=_fake_graph_repo(),
+        vector_repo=_fake_vector_repo(),
+    )
+    result = await IngestionPipeline().run(ctx)
+
+    # 3 parsed files: tool.py, app.js, scorer.ts (.d.ts + .css skipped).
+    assert result.metrics["files_parsed"] == 3
+    assert result.failed_files == ()
+
+    qnames = {u.qualified_name for batch in captured for u in batch}
+    assert "pkg.tool.py_fn" in qnames
+    assert "web.app.run" in qnames
+    assert "web.scorer.score" in qnames

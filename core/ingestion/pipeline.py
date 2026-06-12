@@ -9,8 +9,8 @@ from core.ingestion.context import IngestionContext, IngestionMetrics
 from core.ingestion.graph_builder import _UNIT_TO_NODE, GraphBuilder
 from core.ingestion.logevent import emit_phase2_event
 from core.observability import get_tracer
-from core.parsing import FileWalker, PythonParser
-from schemas import FileRef, IngestionUnit, NodeKind
+from core.parsing import FileWalker, PythonParser, SourceParser, TreeSitterParser
+from schemas import FileRef, IngestionUnit, Language, NodeKind
 from storage.repositories import VectorPoint
 
 _tracer = get_tracer("core.ingestion.pipeline")
@@ -26,6 +26,14 @@ class IngestionResult:
     failed_files: tuple[str, ...]
 
 
+def _default_parsers() -> dict[Language, SourceParser]:
+    return {
+        Language.PYTHON: PythonParser(),
+        Language.JAVASCRIPT: TreeSitterParser(Language.JAVASCRIPT),
+        Language.TYPESCRIPT: TreeSitterParser(Language.TYPESCRIPT),
+    }
+
+
 class IngestionPipeline:
     """Orchestrate file walk → parse → graph build → multi-store write.
 
@@ -39,11 +47,11 @@ class IngestionPipeline:
         self,
         *,
         walker: FileWalker | None = None,
-        parser: PythonParser | None = None,
+        parsers: dict[Language, SourceParser] | None = None,
         builder: GraphBuilder | None = None,
     ) -> None:
         self._walker = walker or FileWalker()
-        self._parser = parser or PythonParser()
+        self._parsers = parsers if parsers is not None else _default_parsers()
         self._builder = builder or GraphBuilder()
 
     async def run(self, ctx: IngestionContext) -> IngestionResult:
@@ -131,8 +139,13 @@ class IngestionPipeline:
                     error=str(exc),
                 )
                 continue
+            parser = self._parsers.get(file_ref.language)
+            if parser is None:
+                # Walked but no parser registered — skip silently, same
+                # behavior as unknown extensions at the walker level.
+                continue
             try:
-                units = self._parser.parse_file(
+                units = parser.parse_file(
                     source=source,
                     repo_id=ctx.repo_id,
                     file_path=file_ref.path,
