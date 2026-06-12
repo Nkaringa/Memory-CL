@@ -8,7 +8,7 @@ import pytest
 
 from schemas import EdgeKind, GraphEdge, GraphNode, NodeKind
 from storage import EdgeNotAllowed, GraphRepository, Neo4jGraphRepository
-from storage.neo4j_repo import _constraint_stmts
+from storage.neo4j_repo import _constraint_stmts, _index_stmts
 
 
 def _node(node_id: str, kind: NodeKind, **overrides: Any) -> GraphNode:
@@ -83,12 +83,31 @@ def test_constraint_stmts_cover_every_node_kind() -> None:
     assert all("IF NOT EXISTS" in s for s in stmts)
 
 
+def test_index_stmts_cover_every_node_kind() -> None:
+    stmts = _index_stmts()
+    labels = [k.value for k in NodeKind]
+    for label in labels:
+        assert any(f"FOR (n:{label})" in s for s in stmts), f"missing index for {label}"
+        assert any("ON (n.repo_id)" in s and f"(n:{label})" in s for s in stmts), (
+            f"index for {label} does not target repo_id"
+        )
+    assert all("IF NOT EXISTS" in s for s in stmts)
+    assert all("CREATE INDEX" in s for s in stmts)
+
+
 @pytest.mark.asyncio
 async def test_ensure_constraints_runs_each_statement() -> None:
     driver = _FakeDriver()
     repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
     await repo.ensure_constraints()
-    assert len(driver.session_obj.runs) == len(_constraint_stmts())
+    expected_runs = len(_constraint_stmts()) + len(_index_stmts())
+    assert len(driver.session_obj.runs) == expected_runs
+    # All constraint statements come first, then all index statements.
+    constraint_stmts = set(_constraint_stmts())
+    index_stmts = set(_index_stmts())
+    run_stmts = [stmt for stmt, _ in driver.session_obj.runs]
+    assert set(run_stmts[: len(_constraint_stmts())]) == constraint_stmts
+    assert set(run_stmts[len(_constraint_stmts()) :]) == index_stmts
 
 
 @pytest.mark.asyncio

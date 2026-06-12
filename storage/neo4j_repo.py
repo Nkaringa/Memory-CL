@@ -24,6 +24,19 @@ def _constraint_stmts() -> tuple[str, ...]:
     )
 
 
+# Per-label range indexes on `repo_id`. Without these, every `repo_graph`
+# call (`MATCH (n {repo_id: $repo_id}) …`) is a full-graph scan — Neo4j
+# cannot use the node_id uniqueness constraint for property lookups on a
+# different property. One index per label keeps them narrow; the creation
+# order mirrors `_constraint_stmts` for consistency.
+def _index_stmts() -> tuple[str, ...]:
+    return tuple(
+        f"CREATE INDEX repo_id_idx_{label.lower()} IF NOT EXISTS "
+        f"FOR (n:{label}) ON (n.repo_id)"
+        for label in (k.value for k in NodeKind)
+    )
+
+
 def _node_props(node: GraphNode) -> dict[str, Any]:
     """Strip None fields so Neo4j doesn't store nulls explicitly."""
     raw = node.model_dump(mode="json")
@@ -118,6 +131,8 @@ class Neo4jGraphRepository:
         with _tracer.start_as_current_span("neo4j_repo.ensure_constraints"):
             async with self._driver.session(database=self._database) as session:
                 for stmt in _constraint_stmts():
+                    await session.run(stmt)
+                for stmt in _index_stmts():
                     await session.run(stmt)
 
     # ----- Writes -----
@@ -268,6 +283,10 @@ class Neo4jGraphRepository:
 
         Returns sorted, deduplicated (src, kind, dst) tuples. Empty input
         short-circuits without touching the driver.
+
+        The `$ids` list is sent as a Bolt value — passing ~20k ids at once
+        is within protocol limits, but latency grows linearly with id-set
+        size as Neo4j evaluates the IN predicate for every candidate edge.
         """
         ids = list(node_ids)
         if not ids:

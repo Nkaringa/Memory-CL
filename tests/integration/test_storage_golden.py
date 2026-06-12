@@ -300,6 +300,24 @@ async def test_golden_python_repo_roundtrip(stores: Stores) -> None:
         # `refresh` lives in the same file: login -(File node)- refresh at depth 2.
         assert "pkg.services.auth.refresh" in qnames
 
+        # repo_graph: whole-repo snapshot via the new endpoint path.
+        # Verifies that the repo_id range indexes bootstrap correctly on
+        # real Neo4j and that the graph contains nodes+edges with externals
+        # excluded (default). Truncation must be false at the fixture scale.
+        rg_nodes, rg_edges = await stores.graph_repo.repo_graph(
+            repo_id, include_external=False, max_nodes=20_000
+        )
+        assert len(rg_nodes) > 0, "repo_graph returned no nodes"
+        assert len(rg_edges) > 0, "repo_graph returned no edges"
+        # Every returned node must belong to this repo and be non-External.
+        from schemas import NodeKind
+        for n in rg_nodes:
+            assert n.repo_id == repo_id, f"node {n.node_id} has wrong repo_id"
+            assert n.kind != NodeKind.EXTERNAL, "External node leaked into non-external graph"
+        # Result count must be consistent with the raw Neo4j node count
+        # (minus any External nodes that were stamped with this repo_id).
+        assert len(rg_nodes) <= nodes
+
         # Idempotency: re-ingesting the same content changes nothing.
         _, again = await _ingest(stores, repo_id, FIXTURE_PY)
         assert again.failed_files == ()

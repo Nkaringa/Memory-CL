@@ -128,6 +128,10 @@ async def repo_graph(
 
     `truncated` is true when the node count hit `max_nodes` — the graph
     may be incomplete and the caller should raise the cap (≤ 20000).
+
+    Note: `truncated` is also true when the repo contains exactly
+    `max_nodes` nodes (a false positive: the graph is complete but the
+    count equals the cap, so we cannot tell without a second query).
     """
     max_nodes = min(max_nodes, _MAX_GRAPH_NODES)
     nodes, edges = await state.graph_repo.repo_graph(
