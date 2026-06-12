@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ALL_NAV_ITEMS } from "@/components/nav/nav-items";
 
 interface PaletteItem {
   href: string;
@@ -12,17 +13,19 @@ interface PaletteItem {
   shortcut: string;
 }
 
-const ITEMS: PaletteItem[] = [
-  { href: "/dashboard",   label: "Dashboard",   hint: "system pulse",        shortcut: "g d" },
-  { href: "/retrieve",    label: "Retrieve",    hint: "primary surface",     shortcut: "g r" },
-  { href: "/graph",       label: "Graph",       hint: "BFS explorer",        shortcut: "g g" },
-  { href: "/ingest",      label: "Ingest",      hint: "repo intake",         shortcut: "g i" },
-  { href: "/mcp",         label: "MCP Tools",   hint: "tool registry",       shortcut: "g m" },
-  { href: "/tool-runner", label: "Tool Runner", hint: "ad-hoc invoke",       shortcut: "g k" },
-  { href: "/snapshot",    label: "Snapshot",    hint: "deterministic state", shortcut: "g s" },
-  { href: "/audit",       label: "Audit",       hint: "hash chain",          shortcut: "g a" },
-  { href: "/status",      label: "Status",      hint: "boot + flags",        shortcut: "g t" },
-];
+// Single nav registry (components/nav/nav-items.ts) drives the palette;
+// palette-specific copy comes through the paletteLabel/paletteHint overrides.
+const ITEMS: PaletteItem[] = ALL_NAV_ITEMS.map((item) => ({
+  href: item.href,
+  label: item.paletteLabel ?? item.label,
+  hint: item.paletteHint ?? item.hint,
+  shortcut: item.shortcut,
+}));
+
+// `g d` → { d: "/dashboard" }, etc.
+const CHORD_MAP: Record<string, string> = Object.fromEntries(
+  ALL_NAV_ITEMS.map((item) => [item.shortcut.split(" ")[1], item.href]),
+);
 
 /** Ctrl/⌘-K palette + simple `g <key>` shortcuts. */
 export function CommandPalette() {
@@ -55,12 +58,7 @@ export function CommandPalette() {
         return;
       }
       if (pending) {
-        const map: Record<string, string> = {
-          d: "/dashboard", r: "/retrieve", g: "/graph", i: "/ingest",
-          m: "/mcp", k: "/tool-runner",
-          s: "/snapshot", a: "/audit", t: "/status",
-        };
-        const dest = map[e.key.toLowerCase()];
+        const dest = CHORD_MAP[e.key.toLowerCase()];
         if (dest) {
           pending = false;
           router.push(dest as never);
