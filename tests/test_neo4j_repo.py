@@ -165,3 +165,42 @@ async def test_neighbors_sorted_by_node_id() -> None:
     driver.session_obj.next_results = [_FakeResult(rows)]
     neighbors = await repo.neighbors("u1", edge_kinds=["CALLS"], depth=1)
     assert [n.node_id for n in neighbors] == ["a", "z"]
+
+
+@pytest.mark.asyncio
+async def test_neighbors_cypher_inlines_depth_and_is_undirected() -> None:
+    """Regression pin for the Gap-3 bug (2026-06-12).
+
+    Neo4j rejects parameters inside variable-length bounds, so `$depth`
+    in the MATCH pattern was a parse-time error — every neighbors() call
+    failed and the retriever swallowed it as 'no neighbors'. The depth
+    must be inlined as a validated int. The pattern must also be
+    UNDIRECTED: a leaf function whose only outbound edges hit External
+    nodes is still connected to the graph via inbound DEFINES/CONTAINS.
+    """
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    driver.session_obj.next_results = [_FakeResult([])]
+    await repo.neighbors("u1", edge_kinds=[], depth=2)
+
+    stmt, params = driver.session_obj.runs[-1]
+    assert "$depth" not in stmt          # the original bug
+    assert "*1..2]" in stmt              # depth inlined as a literal int
+    assert "]->" not in stmt             # undirected, not outbound-only
+    assert "depth" not in params
+    assert params["node_id"] == "u1"
+
+
+@pytest.mark.asyncio
+async def test_neighbors_depth_clamped_to_safe_bounds() -> None:
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    driver.session_obj.next_results = [_FakeResult([]), _FakeResult([])]
+
+    await repo.neighbors("u1", depth=0)
+    stmt, _ = driver.session_obj.runs[-1]
+    assert "*1..1]" in stmt
+
+    await repo.neighbors("u1", depth=999)
+    stmt, _ = driver.session_obj.runs[-1]
+    assert "*1..10]" in stmt
