@@ -46,7 +46,14 @@ _SOURCE_SUFFIXES: tuple[str, ...] = (
     ".py",
     ".jsx", ".mjs", ".cjs", ".js",
     ".tsx", ".mts", ".cts", ".ts",
+    ".cs", ".go", ".java", ".rs",
 )
+
+_INDEX_COLLAPSE_SUFFIXES: frozenset[str | None] = frozenset({
+    ".jsx", ".mjs", ".cjs", ".js",
+    ".tsx", ".mts", ".cts", ".ts",
+    None,
+})
 
 
 def _module_qname(file_path: str) -> str:
@@ -57,17 +64,18 @@ def _module_qname(file_path: str) -> str:
     would create a redundant runtime dependency edge. Kept in sync by
     tests/test_qnames.py::test_graph_builder_mirror_stays_in_sync.
     """
-    is_python = False
+    matched: str | None = None
     stem_path = file_path
     for suffix in _SOURCE_SUFFIXES:
         if file_path.endswith(suffix):
             stem_path = file_path[: -len(suffix)]
-            is_python = suffix == ".py"
+            matched = suffix
             break
     parts = stem_path.split("/")
     if len(parts) > 1 and (
-        (is_python and parts[-1] == "__init__")
-        or (not is_python and parts[-1] == "index")
+        (matched == ".py" and parts[-1] == "__init__")
+        or (matched == ".rs" and parts[-1] == "mod")
+        or (matched in _INDEX_COLLAPSE_SUFFIXES and parts[-1] == "index")
     ):
         parts = parts[:-1]
     return ".".join(parts)
