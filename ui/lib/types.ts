@@ -51,6 +51,7 @@ export interface StatusResponse {
   boot_stages: BootStageView[];
   mcp_tool_count: number;
   schema_version: string;
+  embeddings_enabled?: boolean;
 }
 
 // ---- Retrieval ------------------------------------------------------------
