@@ -25,22 +25,22 @@ def cosine_to_similarity(cosine: float) -> float:
     return cosine
 
 
-def graph_proximity_from_depth(depth: int, max_depth: int) -> float:
-    """Convert BFS depth to a [0, 1] proximity score.
+def graph_proximity_from_depth(depth: int) -> float:
+    """Convert BFS depth to a (0, 1] proximity score: `1 / (1 + depth)`.
 
     depth=0 (the seed itself) → 1.0
-    depth=max_depth+ → 0.0
-    The taper is monotone-decreasing and depth-only — no per-edge
-    weight or randomness so every traversal of the same graph yields
-    the same score.
+    depth=1 → 0.5
+    depth=2 → 0.333…
+    This is the contract documented in `schemas/retrieval.py` for the
+    graph channel's raw_score. The decay is monotone-decreasing,
+    depth-only, and never hard-zeroes — the previous
+    `1 - depth/max_depth` taper scored every candidate AT the requested
+    depth as exactly 0.0, which was a bug. Traversal bounds belong to
+    the retriever, not the score.
     """
-    if max_depth <= 0:
-        return 0.0
     if depth <= 0:
         return 1.0
-    if depth >= max_depth:
-        return 0.0
-    return 1.0 - (depth / max_depth)
+    return 1.0 / (1.0 + depth)
 
 
 def recency_from_age_days(age_days: float, *, half_life_days: float = 30.0) -> float:

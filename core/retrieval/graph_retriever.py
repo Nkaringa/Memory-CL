@@ -44,7 +44,7 @@ class GraphRetriever:
 
     Inputs: a list of seed `node_id`s and a max depth. Output:
     `RetrievalCandidate`s keyed by `unit_id == node_id` with
-    `raw_score = graph_proximity_from_depth(depth, max_depth)`.
+    `raw_score = graph_proximity_from_depth(depth)` — i.e. 1/(1+depth).
 
     EXTERNAL nodes are skipped per the Phase-4 spec (lowest priority,
     no internal structure to retrieve).
@@ -179,13 +179,19 @@ class GraphRetriever:
             return candidates
 
     def _proximity(self, depth: int) -> float:
-        if self._max_depth <= 0:
-            return 0.0
-        if depth <= 0:
-            return 1.0
-        if depth >= self._max_depth:
-            return 0.0
-        return 1.0 - (depth / self._max_depth)
+        """Documented contract (schemas/retrieval.py): 1/(1+depth).
+
+        Delegates to the canonical ranking-side scorer so retrieval and
+        ranking can never drift apart. Independent of max_depth — the
+        traversal bound limits WHICH nodes are visited, not their score
+        (the old taper zeroed the entire requested-depth band).
+        """
+        # Local import: keeps core.retrieval free of an unconditional
+        # import-time dependency on core.ranking (which itself imports
+        # core.retrieval.logevent).
+        from core.ranking.scoring import graph_proximity_from_depth
+
+        return graph_proximity_from_depth(depth)
 
 
 __all__ = ["GraphHit", "GraphRetriever", "GraphTraversalSource"]

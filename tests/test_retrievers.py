@@ -89,6 +89,29 @@ async def test_graph_retriever_proximity_decreases_with_depth() -> None:
 
 
 @pytest.mark.asyncio
+async def test_graph_retriever_scores_documented_decay_at_requested_depth() -> None:
+    """raw_score follows the documented 1/(1+depth) contract.
+
+    Candidates AT the requested max_depth must score 1/(1+depth), not
+    0.0 — the old taper zeroed the entire requested band (Defect C).
+    """
+    graph: dict[str, list[GraphNode]] = {
+        "seed": [_gnode("a")],
+        "a": [_gnode("b")],
+        "b": [_gnode("c")],
+        "c": [],
+    }
+    source = AsyncMock()
+    source.neighbors = AsyncMock(side_effect=lambda nid, **_: graph.get(nid, []))
+
+    cands = await GraphRetriever(source, max_depth=2).search(["seed"])
+    by_id = {c.unit_id: c for c in cands}
+    assert by_id["seed"].raw_score == pytest.approx(1.0)
+    assert by_id["a"].raw_score == pytest.approx(0.5)
+    assert by_id["b"].raw_score == pytest.approx(1 / 3)
+
+
+@pytest.mark.asyncio
 async def test_graph_retriever_isolates_neighbor_failures() -> None:
     source = AsyncMock()
     source.neighbors = AsyncMock(side_effect=RuntimeError("neo4j down"))
