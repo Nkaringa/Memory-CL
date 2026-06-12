@@ -2,6 +2,7 @@ import { type ReactNode } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { MemoryClientError } from "@/lib/api";
 
 interface ErrorStateProps {
   title?: string;
@@ -30,14 +31,35 @@ export function ErrorState({
   className,
   children,
 }: ErrorStateProps) {
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-      ? error
-      : error
-      ? JSON.stringify(error)
-      : null;
+  let message: string | null;
+  if (error instanceof MemoryClientError) {
+    if (error.status === 401) {
+      message = "API key missing or invalid (check MCP_API_KEY)";
+    } else {
+      // Prefer the FastAPI `detail` field when present.
+      const body = error.body as Record<string, unknown> | null | undefined;
+      const detail = body?.detail;
+      if (typeof detail === "string" && detail) {
+        message = detail;
+      } else if (detail != null) {
+        message = JSON.stringify(detail);
+      } else {
+        message = error.message;
+      }
+    }
+  } else if (error instanceof Error) {
+    if (error.name === "AbortError") {
+      message = "Request timed out";
+    } else {
+      message = error.message;
+    }
+  } else if (typeof error === "string") {
+    message = error;
+  } else if (error) {
+    message = JSON.stringify(error);
+  } else {
+    message = null;
+  }
 
   return (
     <div

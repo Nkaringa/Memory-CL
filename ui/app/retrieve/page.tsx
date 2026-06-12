@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton, SkeletonCard } from "@/components/ui/skeleton";
 import { QueryBox, type QueryBoxValue } from "@/components/QueryBox";
 import { ResultViewer } from "@/components/ResultViewer";
+import { FirstRunCard } from "@/components/FirstRunCard";
 import { getMemoryClient } from "@/lib/api";
 import type { RetrieveResponse } from "@/lib/types";
 
@@ -36,9 +37,17 @@ export default function RetrievePage() {
       <PageHeader
         eyebrow="core"
         title="Retrieve"
-        description="Hybrid retrieval over Phase-2 graph + Phase-3 vectors + Phase-4 ranking. Every result carries its breakdown."
+        description="Hybrid retrieval over Phase-2 graph + keyword metadata + Phase-4 ranking; Phase-3 vectors pending. Every result carries its breakdown."
         crumbs={[{ label: "Core" }, { label: "Retrieve" }]}
       />
+
+      <FirstRunCard />
+
+      <div className="mb-6 rounded-md border border-warn/40 bg-warn/[0.06] px-4 py-3 text-sm text-warn/90 leading-relaxed">
+        <strong className="font-semibold">Note:</strong> Semantic vectors are not enabled yet
+        (Phase-3 pending) — the vector channel returns 0 hits by design. Graph and keyword
+        channels are live.
+      </div>
 
       <Card className="mb-6">
         <CardHeader>

@@ -4,7 +4,6 @@ import { type FormEvent, useState } from "react";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { RepoSelect } from "@/components/RepoSelect";
 
 export interface QueryBoxValue {
@@ -33,12 +32,6 @@ export function QueryBox({ defaultValue, onSubmit, pending, className }: QueryBo
     (defaultValue?.seedUnitIds ?? []).join("\n"),
   );
   const [unitKinds, setUnitKinds] = useState<string[]>(defaultValue?.unitKinds ?? []);
-  const [channels, setChannels] = useState({
-    vector: defaultValue?.channels?.vector ?? true,
-    graph: defaultValue?.channels?.graph ?? true,
-    metadata: defaultValue?.channels?.metadata ?? true,
-  });
-
   function toggleKind(k: string) {
     setUnitKinds((prev) =>
       prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k].sort(),
@@ -51,7 +44,7 @@ export function QueryBox({ defaultValue, onSubmit, pending, className }: QueryBo
       text: text.trim(),
       repo_id: repoId.trim(),
       top_k: topK,
-      channels,
+      channels: { vector: true, graph: true, metadata: true },
       seedUnitIds: seedRaw
         .split(/[\n,]+/)
         .map((s) => s.trim())
@@ -101,26 +94,6 @@ export function QueryBox({ defaultValue, onSubmit, pending, className }: QueryBo
         </div>
 
         <div className="flex flex-wrap items-center gap-4 pt-2">
-          <div className="flex items-center gap-3">
-            <Switch
-              id="ch-vector"
-              checked={channels.vector}
-              onCheckedChange={(v) => setChannels((p) => ({ ...p, vector: v }))}
-              label="vector"
-            />
-            <Switch
-              id="ch-graph"
-              checked={channels.graph}
-              onCheckedChange={(v) => setChannels((p) => ({ ...p, graph: v }))}
-              label="graph"
-            />
-            <Switch
-              id="ch-metadata"
-              checked={channels.metadata}
-              onCheckedChange={(v) => setChannels((p) => ({ ...p, metadata: v }))}
-              label="metadata"
-            />
-          </div>
           <div className="flex items-center gap-2">
             {UNIT_KIND_OPTIONS.map((k) => (
               <button

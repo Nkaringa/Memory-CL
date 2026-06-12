@@ -41,7 +41,7 @@ export default function IngestPage() {
       <PageHeader
         eyebrow="core"
         title="Ingest"
-        description="Trigger Phase-2 IngestionPipeline + Phase-3 compression. Reports per-file outcomes deterministically."
+        description="Trigger Phase-2 IngestionPipeline. Reports per-file outcomes deterministically."
         crumbs={[{ label: "Core" }, { label: "Ingest" }]}
         actions={
           <Switch
@@ -97,7 +97,11 @@ export default function IngestPage() {
       {mutation.isError && (
         <ErrorState
           title="Ingestion failed"
-          description="The /ingest endpoint returned an error. Confirm the repo_path is readable from the API host."
+          description={
+            mutation.error?.name === "AbortError"
+              ? "The request timed out client-side — ingestion may still be running on the server. Check the Dashboard before retrying."
+              : "The /ingest endpoint returned an error. Confirm the repo_path is readable from the API host."
+          }
           error={mutation.error}
           onRetry={() => mutation.mutate()}
           className="mb-6"
@@ -151,7 +155,7 @@ function IngestionResult({ res, advanced }: { res: IngestResponse; advanced: boo
     { Icon: Boxes, label: "units changed", value: m.units_changed ?? 0 },
     { Icon: Sigma, label: "graph nodes", value: m.nodes_written ?? 0 },
     { Icon: Sigma, label: "graph edges", value: m.edges_written ?? 0 },
-    { Icon: Sigma, label: "vector payloads", value: m.vector_payloads_written ?? 0 },
+    { Icon: Sigma, label: "vector payloads (placeholders)", value: m.vector_payloads_written ?? 0 },
     { Icon: Sigma, label: "duration", value: fmtMs(m.duration_ms ?? 0) },
   ];
   return (
@@ -205,11 +209,10 @@ function Pipeline() {
     { label: "walk", desc: "Phase-2 deterministic file walker (gitignore-aware)" },
     { label: "parse", desc: "ast.parse → IngestionUnit per symbol" },
     { label: "graph", desc: "EDGE_RULES-validated nodes + edges → Neo4j" },
-    { label: "compress", desc: "Phase-3 dense encode + module summaries" },
-    { label: "embed", desc: "deterministic embedder → Qdrant payload" },
+    { label: "store", desc: "canonical units → Postgres; placeholder payloads (vectors pending Phase-3) → Qdrant" },
   ];
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-5 gap-2 text-xs">
+    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
       {stages.map((s) => (
         <div key={s.label} className="rounded border border-border bg-bg/30 p-3">
           <div className="font-mono text-accent mb-1">{s.label}</div>

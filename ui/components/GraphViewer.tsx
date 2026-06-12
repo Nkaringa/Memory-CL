@@ -220,8 +220,19 @@ export function GraphViewer({
                 description="Submit a node + depth above. EXTERNAL nodes are visually dimmed but still reachable."
                 className="h-[420px]"
               />
+            ) : data.candidates.length === 1 && (data.candidates[0]?.depth ?? -1) === 0 ? (
+              <div className="h-[420px] rounded-md border border-border bg-bg/40 flex items-center justify-center">
+                <div className="text-center text-sm muted px-6 max-w-sm">
+                  <GitGraph size={24} className="mx-auto mb-3 opacity-40" />
+                  Only the seed node was returned — it may have no edges at this depth, or try
+                  increasing depth.
+                </div>
+              </div>
             ) : (
               <>
+                <div className="text-[10px] muted font-mono mb-1">
+                  Reachability view — drawn edges are seed→node projections, not literal graph edges.
+                </div>
                 <div
                   ref={containerRef}
                   className="w-full h-[420px] rounded-md border border-border bg-bg/40"
