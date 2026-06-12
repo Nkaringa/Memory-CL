@@ -58,8 +58,22 @@ class Settings(BaseSettings):
     # ----- LLM / embedding -----
     openai_api_key: SecretStr | None = Field(default=None)
     anthropic_api_key: SecretStr | None = Field(default=None)
-    embedding_model: str = Field(default="text-embedding-3-large")
+    # 1536-dim — matches the existing Qdrant collections, no migration.
+    embedding_model: str = Field(default="text-embedding-3-small")
     primary_llm: str = Field(default="claude-sonnet-4")
+
+    @property
+    def embeddings_enabled(self) -> bool:
+        """True when a real embedding provider key is configured.
+
+        Drives whether ingest wires an `OpenAIEmbedder` (real semantic
+        vectors) or leaves placeholder points (the pre-Phase-3 behavior).
+        Empty / whitespace-only keys do not count as configured.
+        """
+        return (
+            self.openai_api_key is not None
+            and bool(self.openai_api_key.get_secret_value().strip())
+        )
 
     # ----- Retrieval -----
     max_context_tokens: int = Field(default=4000, gt=0)
