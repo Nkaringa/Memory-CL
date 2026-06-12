@@ -45,11 +45,19 @@ _EDGE_MERGE = (
     "    r.weight = $weight"
 )
 
-_NEIGHBORS_QUERY = (
-    "MATCH (a {node_id: $node_id})-[r*1..$depth]->(b) "
+# Depth is inlined as a literal int (clamped in `neighbors()`): Neo4j
+# rejects parameters inside variable-length bounds, so `*1..$depth` is a
+# parse-time syntax error — the cause of the long-standing "0 neighbors"
+# bug. The pattern is UNDIRECTED on purpose: a unit whose only outbound
+# edges hit External nodes is still connected to the rest of the graph
+# through inbound DEFINES/CONTAINS/CALLS edges.
+_NEIGHBORS_QUERY_TEMPLATE = (
+    "MATCH (a {{node_id: $node_id}})-[r*1..{depth}]-(b) "
     "WHERE size($edge_kinds) = 0 OR all(rel IN r WHERE type(rel) IN $edge_kinds) "
     "RETURN DISTINCT b"
 )
+
+_MAX_NEIGHBOR_DEPTH = 10  # mirrors the MCP request schema's upper bound
 
 _DELETE_FOR_FILE = (
     "MATCH (n {repo_id: $repo_id, file_path: $file_path}) "
@@ -192,13 +200,12 @@ class Neo4jGraphRepository:
         edge_kinds: Sequence[str] | None = None,
         depth: int = 1,
     ) -> Sequence[GraphNode]:
-        depth = max(1, int(depth))
+        depth = max(1, min(int(depth), _MAX_NEIGHBOR_DEPTH))
         async with self._driver.session(database=self._database) as session:
             result = await session.run(
-                _NEIGHBORS_QUERY,
+                _NEIGHBORS_QUERY_TEMPLATE.format(depth=depth),
                 {
                     "node_id": node_id,
-                    "depth": depth,
                     "edge_kinds": list(edge_kinds or []),
                 },
             )
