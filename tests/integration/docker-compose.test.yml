@@ -1,0 +1,68 @@
+# ============================================================================
+# Throwaway integration-test stack for tests/integration/test_storage_golden.py
+#
+# All host ports are NON-default (5xxxx range) so this stack can run next to
+# a dev `docker compose up` (5432/7687/6333/6379) without ever colliding.
+#
+#     docker compose -f tests/integration/docker-compose.test.yml up -d --wait
+#     .venv/bin/pytest -m integration tests/integration/ -v
+#     docker compose -f tests/integration/docker-compose.test.yml down -v
+#
+# No named volumes on purpose: the stack is ephemeral and `down -v` removes
+# the anonymous ones the images declare.
+# ============================================================================
+name: memory-cl-test
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: memory-cl-test-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: memory_test
+    ports:
+      - "55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d memory_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  neo4j:
+    image: neo4j:5.22-community
+    container_name: memory-cl-test-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/memory-cl-test
+      # No APOC: the repository layer uses plain MERGE/MATCH only, and
+      # skipping the plugin download makes cold start faster + offline-safe.
+    ports:
+      - "57474:7474"
+      - "57687:7687"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.11.0
+    container_name: memory-cl-test-qdrant
+    ports:
+      - "56333:6333"
+    # No healthcheck: the qdrant image ships no shell/wget/curl (same caveat
+    # as docker-compose.production.yml, which uses `service_started`). The
+    # test compensates with a ping-retry loop before touching the store.
+
+  redis:
+    image: redis:7-alpine
+    container_name: memory-cl-test-redis
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
