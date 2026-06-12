@@ -103,11 +103,15 @@ class QueryGraphTool(_GraphCallMixin):
         cands = await retriever.search(
             seeds, query_id=ctx.request_id, repo_id=request.repo_id
         )
+        edges = await _real_edges_among(
+            ctx.state.graph_repo, [c.unit_id for c in cands]
+        )
         return {
             "node": request.node,
             "found": True,
             "depth": request.depth,
             "candidates": [_candidate_to_dict(c) for c in cands],
+            "edges": edges,
         }
 
 
@@ -162,6 +166,25 @@ class GetRisksTool(_GraphCallMixin):
             "risks": externals,
             "risk_count": len(externals),
         }
+
+
+async def _real_edges_among(graph_repo: Any, unit_ids: list[str]) -> list[dict[str, Any]]:
+    """REAL edges among the returned nodes — degrades to [] gracefully.
+
+    Older / alternative GraphRepository implementations may not expose
+    `edges_among`; backend failures must never sink the whole response.
+    """
+    edges_among = getattr(graph_repo, "edges_among", None)
+    if edges_among is None:
+        return []
+    try:
+        raw = await edges_among(unit_ids)
+        return [
+            {"src_id": src, "kind": kind, "dst_id": dst}
+            for src, kind, dst in raw
+        ]
+    except Exception:
+        return []
 
 
 def _candidate_to_dict(c: RetrievalCandidate) -> dict[str, Any]:

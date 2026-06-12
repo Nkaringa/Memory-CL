@@ -51,6 +51,9 @@ class QueryGraphResult(_SdkBase):
     found: bool
     depth: int = 1
     candidates: list[dict[str, Any]] = []
+    # Real directed edges among the returned candidates (additive; older
+    # servers simply omit it).
+    edges: list[dict[str, Any]] = []
 
 
 class McpToolResult(_SdkBase):

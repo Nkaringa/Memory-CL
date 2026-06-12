@@ -14,18 +14,36 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { JsonView } from "@/components/ui/json-view";
 import { EmptyState } from "@/components/ui/empty-state";
 import { fmtScore } from "@/lib/utils";
-import type { McpToolResponse } from "@/lib/types";
+import type {
+  GraphQueryCandidate,
+  GraphQueryEdge,
+  McpToolResponse,
+} from "@/lib/types";
 
 cytoscape.use(fcose);
 
-interface GraphCandidate {
-  unit_id: string;
-  qualified_name: string | null;
-  kind: string | null;
-  file_path: string | null;
-  raw_score: number;
-  channel: string;
-  depth: number | null;
+type GraphCandidate = GraphQueryCandidate;
+
+// Edge colors by relationship kind — same GitHub-dark tokens the node
+// styles use (#58a6ff accent, #30363d border, #7d8590 muted).
+const EDGE_COLOR_DEFAULT = "#30363d";
+const EDGE_COLORS: Record<string, string> = {
+  CALLS: "#539bf5",    // accent-ish blue — the interesting edges
+  IMPORTS: "#5b7da6",  // muted blue
+  DEFINES: "#3d444d",  // faint gray, barely above the border tone
+  CONTAINS: "#3d444d", // faint gray — structural, not semantic
+  INHERITS: "#a371f7", // purple-ish — type hierarchy
+  REFERENCES: "#3d444d", // faint gray, same as DEFINES/CONTAINS
+};
+
+/** Last path segment(s) of a qualified name, capped for canvas legibility.
+ *  Full identity lives in the hover tooltip + NodeInspector. */
+function nodeLabel(c: GraphCandidate, isSeed: boolean): string {
+  const full = c.qualified_name ?? c.unit_id.slice(0, 12);
+  const parts = full.split(".");
+  // Seed keeps two segments ("a.b") for orientation; others just the leaf.
+  const short = isSeed ? parts.slice(-2).join(".") : parts[parts.length - 1] ?? full;
+  return short.length > 24 ? `${short.slice(0, 23)}…` : short;
 }
 
 export interface GraphViewerProps {
@@ -59,36 +77,80 @@ export function GraphViewer({
     for (const c of data.candidates) {
       if (seen.has(c.unit_id)) continue;
       seen.add(c.unit_id);
-      const isExternal = (c.kind ?? "").toLowerCase().includes("external") ||
+      const kindLc = (c.kind ?? "").toLowerCase();
+      const isExternal = kindLc.includes("external") ||
         c.unit_id.startsWith("external:");
+      const isSeed = (c.depth ?? -1) === 0;
       elements.push({
         data: {
           id: c.unit_id,
-          label: c.qualified_name ?? c.unit_id.slice(0, 12),
+          label: nodeLabel(c, isSeed),
           kind: c.kind ?? "?",
           depth: c.depth ?? 0,
           isExternal,
+          // Module/file containers read slightly larger so the hierarchy
+          // is visible at a glance.
+          isModule: kindLc.includes("module") || kindLc.includes("file"),
         },
       });
     }
-    const seed = data.candidates.find((c) => (c.depth ?? -1) === 0);
-    if (seed) {
-      for (const c of data.candidates) {
-        if (c.unit_id === seed.unit_id) continue;
+
+    if (data.edges.length > 0) {
+      // Real directed edges as stored (Phase-2 EDGE_RULES). Endpoints not in
+      // the candidate set are skipped defensively.
+      const edgeSeen = new Set<string>();
+      for (const e of data.edges) {
+        if (!seen.has(e.src_id) || !seen.has(e.dst_id)) continue;
+        const id = `${e.src_id}-${e.kind}->${e.dst_id}`;
+        if (edgeSeen.has(id)) continue;
+        edgeSeen.add(id);
         elements.push({
           data: {
-            id: `${seed.unit_id}->${c.unit_id}`,
-            source: seed.unit_id,
-            target: c.unit_id,
+            id,
+            source: e.src_id,
+            target: e.dst_id,
+            label: e.kind,
+            color: EDGE_COLORS[e.kind] ?? EDGE_COLOR_DEFAULT,
           },
         });
+      }
+    } else {
+      // Fallback for older/degraded backends that don't return `edges`:
+      // seed→node reachability projection (NOT literal graph edges).
+      const seed = data.candidates.find((c) => (c.depth ?? -1) === 0);
+      if (seed) {
+        for (const c of data.candidates) {
+          if (c.unit_id === seed.unit_id) continue;
+          elements.push({
+            data: {
+              id: `${seed.unit_id}->${c.unit_id}`,
+              source: seed.unit_id,
+              target: c.unit_id,
+              color: EDGE_COLOR_DEFAULT,
+            },
+          });
+        }
       }
     }
 
     const cy = cytoscape({
       container: containerRef.current,
       elements,
-      layout: { name: "fcose", animate: false, randomize: false } as never,
+      // Option names verified against cytoscape-fcose/src/fcose/index.js
+      // (the package ships no .d.ts, hence the cast): quality, randomize,
+      // packComponents, nodeRepulsion, idealEdgeLength, nodeSeparation.
+      // packComponents fully engages only when cytoscape-layout-utilities
+      // is registered; without it fcose degrades gracefully.
+      layout: {
+        name: "fcose",
+        animate: false,
+        quality: "proof",
+        randomize: true, // cold layouts need it — `false` caused the smear
+        packComponents: true,
+        nodeRepulsion: 12000,
+        idealEdgeLength: 90,
+        nodeSeparation: 120,
+      } as never,
       wheelSensitivity: 0.2,
       style: [
         {
@@ -99,12 +161,26 @@ export function GraphViewer({
             "border-color": "#30363d",
             label: "data(label)",
             color: "#e6eaf0",
-            "font-size": 9,
+            "font-size": 10,
             "font-family": "ui-monospace, monospace",
             "text-valign": "bottom",
             "text-margin-y": 6,
+            "text-wrap": "ellipsis",
+            "text-max-width": "140px",
             width: 18,
             height: 18,
+          },
+        },
+        {
+          // Module/file containers — slightly larger with a distinct solid
+          // border so the structural skeleton reads through the leaf nodes.
+          selector: "node[?isModule]",
+          style: {
+            width: 24,
+            height: 24,
+            "border-width": 2,
+            "border-color": "#6e7681",
+            "background-color": "#1c2128",
           },
         },
         {
@@ -130,15 +206,38 @@ export function GraphViewer({
         {
           selector: "edge",
           style: {
-            "curve-style": "straight",
+            // bezier so parallel edges of different kinds (CALLS + DEFINES
+            // between the same pair) don't overlap into one line.
+            "curve-style": "bezier",
             "target-arrow-shape": "triangle",
-            "line-color": "#30363d",
-            "target-arrow-color": "#30363d",
+            "arrow-scale": 0.6,
+            "line-color": "data(color)",
+            "target-arrow-color": "data(color)",
             width: 1,
           },
         },
         {
-          selector: ":selected",
+          // Edge kind label only when selected — never statically (clutter).
+          selector: "edge[label]:selected",
+          style: {
+            label: "data(label)",
+            "font-size": 8,
+            "font-family": "ui-monospace, monospace",
+            color: "#7d8590",
+            "text-rotation": "autorotate",
+            "text-background-color": "#161b22",
+            "text-background-opacity": 0.85,
+            "text-background-padding": "2px",
+          },
+        },
+        {
+          selector: "edge:selected",
+          style: {
+            width: 1.5,
+          },
+        },
+        {
+          selector: "node:selected",
           style: {
             "border-color": "#58a6ff",
             "border-width": 2.5,
@@ -231,7 +330,9 @@ export function GraphViewer({
             ) : (
               <>
                 <div className="text-[10px] muted font-mono mb-1">
-                  Reachability view — drawn edges are seed→node projections, not literal graph edges.
+                  {data.edges.length > 0
+                    ? "Graph edges as stored (Phase-2 EDGE_RULES)"
+                    : "Reachability view — drawn edges are seed→node projections, not literal graph edges."}
                 </div>
                 <div
                   ref={containerRef}
@@ -379,9 +480,17 @@ function Legend() {
   );
 }
 
-function extract(response: McpToolResponse | null): { candidates: GraphCandidate[] } {
-  if (!response || response.status !== "success") return { candidates: [] };
+function extract(response: McpToolResponse | null): {
+  candidates: GraphCandidate[];
+  edges: GraphQueryEdge[];
+} {
+  if (!response || response.status !== "success") return { candidates: [], edges: [] };
   const raw = (response.data?.candidates ?? []) as unknown[];
+  // `edges` is additive (backend ≥ ff56ac0) — absent or [] on older /
+  // degraded backends, in which case the star-projection fallback draws.
+  const rawEdges = Array.isArray(response.data?.edges)
+    ? (response.data.edges as unknown[])
+    : [];
   return {
     candidates: raw.map((r) => {
       const o = r as Record<string, unknown>;
@@ -394,6 +503,11 @@ function extract(response: McpToolResponse | null): { candidates: GraphCandidate
         channel: String(o.channel ?? "graph"),
         depth: typeof o.depth === "number" ? o.depth : null,
       };
+    }),
+    edges: rawEdges.flatMap((r) => {
+      const o = r as Record<string, unknown>;
+      if (typeof o?.src_id !== "string" || typeof o?.dst_id !== "string") return [];
+      return [{ src_id: o.src_id, kind: String(o.kind ?? "?"), dst_id: o.dst_id }];
     }),
   };
 }

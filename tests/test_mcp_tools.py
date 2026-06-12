@@ -92,6 +92,7 @@ def _state(pg_rows=None, qdrant_hits=None, neighbors=None,
 
     graph_repo = AsyncMock()
     graph_repo.neighbors = AsyncMock(return_value=neighbors or [])
+    graph_repo.edges_among = AsyncMock(return_value=[])
 
     vector_repo = AsyncMock()
     vector_repo.ensure_collection = AsyncMock()
@@ -291,6 +292,63 @@ async def test_query_graph_returns_seed_plus_neighbors() -> None:
     assert resp.status.value == "success"
     ids = {c["unit_id"] for c in resp.data["candidates"]}
     assert "u-seed" in ids and "u-x" in ids
+
+
+@pytest.mark.asyncio
+async def test_query_graph_includes_real_edges_among_candidates() -> None:
+    from schemas import GraphNode, NodeKind
+
+    neighbors = [
+        GraphNode(
+            node_id="u-x", kind=NodeKind.FUNCTION, repo_id="acme",
+            qualified_name="pkg.m.x", name="x", file_path="f.py",
+            line_start=1, line_end=2, commit_sha="c", source_sha="s",
+        ),
+    ]
+    state = _state(pg_rows=[{"unit_id": "u-seed"}], neighbors=neighbors)
+    state.graph_repo.edges_among = AsyncMock(
+        return_value=[("u-seed", "CALLS", "u-x")],
+    )
+    resp = await ToolExecutor(build_default_registry()).execute(
+        "query_graph",
+        {"node": "pkg.m.thing", "repo_id": "acme", "depth": 2},
+        ctx=_ctx(state),
+    )
+    assert resp.status.value == "success"
+    assert resp.data["edges"] == [
+        {"src_id": "u-seed", "kind": "CALLS", "dst_id": "u-x"},
+    ]
+    # edges_among was queried over the candidate unit_ids.
+    (called_ids,) = state.graph_repo.edges_among.call_args.args
+    assert set(called_ids) == {c["unit_id"] for c in resp.data["candidates"]}
+
+
+@pytest.mark.asyncio
+async def test_query_graph_edges_degrade_when_method_absent() -> None:
+    state = _state(pg_rows=[{"unit_id": "u-seed"}], neighbors=[])
+    del state.graph_repo.edges_among  # repo without the capability
+    resp = await ToolExecutor(build_default_registry()).execute(
+        "query_graph",
+        {"node": "pkg.m.thing", "repo_id": "acme", "depth": 1},
+        ctx=_ctx(state),
+    )
+    assert resp.status.value == "success"
+    assert resp.data["found"] is True
+    assert resp.data["edges"] == []
+
+
+@pytest.mark.asyncio
+async def test_query_graph_edges_degrade_on_backend_exception() -> None:
+    state = _state(pg_rows=[{"unit_id": "u-seed"}], neighbors=[])
+    state.graph_repo.edges_among = AsyncMock(side_effect=RuntimeError("boom"))
+    resp = await ToolExecutor(build_default_registry()).execute(
+        "query_graph",
+        {"node": "pkg.m.thing", "repo_id": "acme", "depth": 1},
+        ctx=_ctx(state),
+    )
+    assert resp.status.value == "success"
+    assert resp.data["found"] is True
+    assert resp.data["edges"] == []
 
 
 # ---- update_memory --------------------------------------------------------

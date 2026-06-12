@@ -61,6 +61,16 @@ _MAX_NEIGHBOR_DEPTH = 10  # mirrors the MCP request schema's upper bound
 
 _GET_NODE_QUERY = "MATCH (n {node_id: $node_id}) RETURN n LIMIT 1"
 
+# Directed on purpose — callers want the REAL edge direction among a node
+# set (e.g. to render arrows), unlike `neighbors()` whose reachability
+# pattern is undirected. A plain `$ids` list param in WHERE is fine; only
+# variable-length bounds reject parameters.
+_EDGES_AMONG_QUERY = (
+    "MATCH (a)-[r]->(b) "
+    "WHERE a.node_id IN $ids AND b.node_id IN $ids "
+    "RETURN a.node_id AS src, type(r) AS kind, b.node_id AS dst"
+)
+
 _DELETE_FOR_FILE = (
     "MATCH (n {repo_id: $repo_id, file_path: $file_path}) "
     "DETACH DELETE n "
@@ -231,6 +241,21 @@ class Neo4jGraphRepository:
             out.append(_record_to_node(n))
         out.sort(key=lambda n: n.node_id)
         return out
+
+    async def edges_among(self, node_ids: Sequence[str]) -> list[tuple[str, str, str]]:
+        """All directed edges whose endpoints BOTH lie in `node_ids`.
+
+        Returns sorted, deduplicated (src, kind, dst) tuples. Empty input
+        short-circuits without touching the driver.
+        """
+        ids = list(node_ids)
+        if not ids:
+            return []
+        async with self._driver.session(database=self._database) as session:
+            result = await session.run(_EDGES_AMONG_QUERY, {"ids": ids})
+            records = await result.data()
+        edges = {(rec["src"], rec["kind"], rec["dst"]) for rec in records}
+        return sorted(edges)
 
     async def delete_subgraph_for_file(self, repo_id: str, file_path: str) -> int:
         with _tracer.start_as_current_span("neo4j_repo.delete_subgraph_for_file") as span:

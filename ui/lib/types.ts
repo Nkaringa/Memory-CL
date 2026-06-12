@@ -103,6 +103,24 @@ export interface RetrieveResponse {
   latency_ms: number;
 }
 
+// ---- Graph (query_graph tool) ---------------------------------------------
+export interface GraphQueryCandidate {
+  unit_id: string;
+  qualified_name: string | null;
+  kind: string | null;
+  file_path: string | null;
+  raw_score: number;
+  channel: string;
+  depth: number | null;
+}
+
+/** Real directed edge among returned candidates (backend ≥ ff56ac0). */
+export interface GraphQueryEdge {
+  src_id: string;
+  kind: string;
+  dst_id: string;
+}
+
 // ---- Ingestion ------------------------------------------------------------
 export interface IngestRequest {
   repo_id: string;

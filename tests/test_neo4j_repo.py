@@ -222,6 +222,48 @@ async def test_neighbors_cypher_inlines_depth_and_is_undirected() -> None:
 
 
 @pytest.mark.asyncio
+async def test_edges_among_query_uses_ids_param_and_directed_pattern() -> None:
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    driver.session_obj.next_results = [_FakeResult([])]
+    await repo.edges_among(["a", "b"])
+
+    stmt, params = driver.session_obj.runs[-1]
+    assert "a.node_id IN $ids" in stmt
+    assert "b.node_id IN $ids" in stmt
+    assert "]->" in stmt  # directed: real edge direction, not undirected
+    assert params == {"ids": ["a", "b"]}
+
+
+@pytest.mark.asyncio
+async def test_edges_among_maps_sorts_and_dedupes() -> None:
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    rows = [
+        {"src": "b", "kind": "CALLS", "dst": "a"},
+        {"src": "a", "kind": "DEFINES", "dst": "b"},
+        {"src": "a", "kind": "CALLS", "dst": "b"},
+        {"src": "a", "kind": "CALLS", "dst": "b"},  # duplicate
+    ]
+    driver.session_obj.next_results = [_FakeResult(rows)]
+    edges = await repo.edges_among(["a", "b"])
+
+    assert edges == [
+        ("a", "CALLS", "b"),
+        ("a", "DEFINES", "b"),
+        ("b", "CALLS", "a"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_edges_among_empty_input_short_circuits() -> None:
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    assert await repo.edges_among([]) == []
+    assert driver.session_obj.runs == []  # never touched the driver
+
+
+@pytest.mark.asyncio
 async def test_neighbors_depth_clamped_to_safe_bounds() -> None:
     driver = _FakeDriver()
     repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
