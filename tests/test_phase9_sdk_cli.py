@@ -38,7 +38,7 @@ def _build_fake_api() -> FastAPI:
             "repo_id": body["repo_id"],
             "units_total": 5,
             "units_embedded": 5,
-            "failed": 0,
+            "failed_batches": 0,
         }
 
     @app.post("/retrieve")
@@ -146,7 +146,7 @@ async def test_sdk_reembed_repository(asgi_transport: httpx.ASGITransport) -> No
     assert res.repo_id == "acme"
     assert res.units_total == 5
     assert res.units_embedded == 5
-    assert res.failed == 0
+    assert res.failed_batches == 0
 
 
 @pytest.mark.asyncio
@@ -301,7 +301,8 @@ def test_cli_reembed_dispatches_through_sdk(
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload == {
-        "failed": 0, "repo_id": "acme", "units_embedded": 5, "units_total": 5,
+        "failed_batches": 0, "repo_id": "acme", "units_embedded": 5,
+        "units_total": 5,
     }
 
 

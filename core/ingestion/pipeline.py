@@ -229,7 +229,32 @@ class IngestionPipeline:
             ctx.metrics.nodes_written += n_nodes
             ctx.metrics.edges_written += n_edges
 
-            # Qdrant payloads (no vectors yet)
+            # Phase 3: a unit is "changed" when its id is new OR its
+            # source_sha differs from the row we just reconciled against.
+            # When the obsolete path wiped the file's vector footprint
+            # above, every surviving unit lost its vector with it — they
+            # all need fresh points and re-embeds.
+            if obsolete:
+                changed_units = list(units)
+            else:
+                changed_units = [
+                    u
+                    for u in units
+                    if existing_sha.get(u.unit_id) != u.source_sha
+                ]
+
+            # Qdrant payloads (no vectors yet). Qdrant upsert replaces
+            # whole points, so with an embedding pipeline wired we write
+            # placeholders ONLY for changed units — unchanged units'
+            # points already exist with real vectors and rewriting them
+            # would zero those vectors out (data loss). Without an
+            # embedding pipeline every point is a placeholder anyway, so
+            # the all-units write is harmless and keeps payload metadata
+            # fresh. (The wipe path above is covered either way:
+            # changed_units == all units of the file there.)
+            placeholder_units = (
+                changed_units if self._embedding_pipeline is not None else units
+            )
             points = [
                 VectorPoint(
                     point_id=u.unit_id,
@@ -242,24 +267,15 @@ class IngestionPipeline:
                     commit_sha=u.commit_sha,
                     source_sha=u.source_sha,
                 )
-                for u in units
+                for u in placeholder_units
             ]
-            n_vecs = await ctx.vector_repo.upsert_payloads(ctx.units_collection, points)
+            n_vecs = 0
+            if points:
+                n_vecs = await ctx.vector_repo.upsert_payloads(
+                    ctx.units_collection, points
+                )
             ctx.metrics.vector_payloads_written += n_vecs
 
-            # Phase 3: real vectors for the changed set only. A unit is
-            # "changed" when its id is new OR its source_sha differs from
-            # the row we just reconciled against. When the obsolete path
-            # wiped the file's vector footprint above, every surviving
-            # unit lost its vector with it — re-embed them all.
-            if obsolete:
-                changed_units = list(units)
-            else:
-                changed_units = [
-                    u
-                    for u in units
-                    if existing_sha.get(u.unit_id) != u.source_sha
-                ]
             if self._embedding_pipeline is not None and changed_units:
                 embed_start = time.perf_counter()
                 try:

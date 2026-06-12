@@ -81,7 +81,11 @@ async def test_single_batch_happy_path_sends_auth_and_preserves_order() -> None:
     assert requests[0].url == OPENAI_EMBEDDINGS_URL
     assert requests[0].headers["Authorization"] == "Bearer sk-test"
     sent = json.loads(requests[0].content)
-    assert sent == {"model": "text-embedding-3-small", "input": ["a", "bb", "ccc"]}
+    assert sent == {
+        "model": "text-embedding-3-small",
+        "input": ["a", "bb", "ccc"],
+        "dimensions": 4,
+    }
 
     # Order preserved even though the mock returned data reversed.
     assert vectors == [
@@ -186,6 +190,51 @@ async def test_malformed_response_raises_provider_error() -> None:
     e = _make_embedder(handler)
     with pytest.raises(EmbeddingProviderError):
         await e.embed_batch(["x"])
+
+
+# ---- dimension validation ------------------------------------------------------
+async def test_request_body_pins_dimensions_param() -> None:
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return _ok_response(request, dimension=7)
+
+    e = _make_embedder(handler, dimension=7)
+    await e.embed_batch(["x"])
+    assert seen[0]["dimensions"] == 7
+
+
+async def test_dimension_mismatch_raises_provider_error_before_returning() -> None:
+    """The provider returning the wrong vector size must fail loudly —
+    silently storing mis-sized vectors would poison the collection."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Embedder configured for 4 dims; provider returns 3.
+        return _ok_response(request, dimension=3)
+
+    e = _make_embedder(handler, dimension=4)
+    with pytest.raises(EmbeddingProviderError) as exc_info:
+        await e.embed_batch(["x"])
+    msg = str(exc_info.value)
+    assert "3" in msg and "4" in msg
+
+
+# ---- secret redaction -----------------------------------------------------------
+async def test_error_messages_redact_api_key_material() -> None:
+    """A provider error body that echoes key material must never leak
+    into the raised message (which gets logged)."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={"error": {"message": "Incorrect API key provided: sk-proj-LEAKED_key-42"}},
+        )
+
+    e = _make_embedder(handler, api_key="sk-proj-LEAKED_key-42")
+    with pytest.raises(EmbeddingProviderError) as exc_info:
+        await e.embed_batch(["x"])
+    msg = str(exc_info.value)
+    assert "sk-proj-LEAKED_key-42" not in msg
+    assert "sk-***" in msg
 
 
 # ---- truncation ---------------------------------------------------------------

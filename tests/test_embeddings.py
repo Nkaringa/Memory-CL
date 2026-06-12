@@ -15,7 +15,12 @@ from core.embeddings.chunking_strategy import estimate_tokens
 from schemas import IngestionUnit, Language, UnitKind, content_sha, stable_unit_id
 
 
-def _u(qname: str, content: str, kind: UnitKind = UnitKind.FUNCTION) -> IngestionUnit:
+def _u(
+    qname: str,
+    content: str,
+    kind: UnitKind = UnitKind.FUNCTION,
+    signature: str | None = None,
+) -> IngestionUnit:
     return IngestionUnit(
         unit_id=stable_unit_id("r", "pkg/m.py", qname),
         repo_id="r",
@@ -30,6 +35,7 @@ def _u(qname: str, content: str, kind: UnitKind = UnitKind.FUNCTION) -> Ingestio
         line_end=max(1, content.count("\n") + 1),
         content=content,
         source_sha=content_sha(content),
+        signature=signature,
     )
 
 
@@ -170,6 +176,71 @@ async def test_pipeline_handles_unit_with_empty_content() -> None:
     assert res.vectors_written == 1
     sent = list(repo.upsert_payloads.call_args.args[1])
     assert sent[0].vector is None  # placeholder pathway, no embedding
+
+
+class _RecordingEmbedder:
+    """Embedder fake that records the exact texts it was asked to embed."""
+
+    name = "recording"
+
+    def __init__(self, dimension: int = 8) -> None:
+        self.dimension = dimension
+        self.texts: list[str] = []
+
+    async def embed_batch(self, texts):
+        self.texts.extend(texts)
+        return [(1.0,) * self.dimension for _ in texts]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_embedded_text_starts_with_qname_header() -> None:
+    """I2: the embedded text for a unit's primary chunk is prefixed with
+    `<qualified_name> (<kind>)\\n<signature>\\n` so retrieval queries that
+    mention names match even when the body doesn't repeat them."""
+    content = "def login(user, password):\n    return token\n"
+    unit = _u("pkg.m.login", content, signature="def login(user, password)")
+    embedder = _RecordingEmbedder(dimension=8)
+    pipe = EmbeddingPipeline(
+        embedder=embedder,  # type: ignore[arg-type]
+        chunker=ChunkingStrategy(chunk_size=400, chunk_overlap=40),
+        vector_repo=_make_vector_repo(),
+    )
+    await pipe.run([unit], collection="c")
+
+    assert embedder.texts == [
+        f"pkg.m.login ({UnitKind.FUNCTION.value})\ndef login(user, password)\n{content}"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_header_uses_empty_signature_line_when_none() -> None:
+    unit = _u("pkg.m.Thing", "class Thing:\n    pass\n", kind=UnitKind.CLASS)
+    embedder = _RecordingEmbedder(dimension=8)
+    pipe = EmbeddingPipeline(
+        embedder=embedder,  # type: ignore[arg-type]
+        chunker=ChunkingStrategy(chunk_size=400, chunk_overlap=40),
+        vector_repo=_make_vector_repo(),
+    )
+    await pipe.run([unit], collection="c")
+
+    assert embedder.texts[0].startswith("pkg.m.Thing (cls)\n\n")
+    assert embedder.texts[0].endswith("class Thing:\n    pass\n")
+
+
+@pytest.mark.asyncio
+async def test_pipeline_embedded_text_is_deterministic() -> None:
+    unit = _u("pkg.m.f", "def f(): return 1\n", signature="def f()")
+    texts: list[list[str]] = []
+    for _ in range(2):
+        embedder = _RecordingEmbedder(dimension=8)
+        pipe = EmbeddingPipeline(
+            embedder=embedder,  # type: ignore[arg-type]
+            chunker=ChunkingStrategy(chunk_size=400, chunk_overlap=40),
+            vector_repo=_make_vector_repo(),
+        )
+        await pipe.run([unit], collection="c")
+        texts.append(list(embedder.texts))
+    assert texts[0] == texts[1]
 
 
 @pytest.mark.asyncio

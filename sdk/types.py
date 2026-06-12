@@ -27,7 +27,8 @@ class ReembedResult(_SdkBase):
     repo_id: str
     units_total: int
     units_embedded: int
-    failed: int
+    # Failed BATCHES (not units) — mirrors the API's `failed_batches`.
+    failed_batches: int
 
 
 class RetrieveResult(_SdkBase):

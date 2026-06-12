@@ -14,6 +14,22 @@ from storage.repositories import VectorPoint, VectorRepository
 _tracer = get_tracer("core.embeddings.embedding_pipeline")
 
 
+def _embed_text(unit: IngestionUnit, chunk: EmbeddingChunk) -> str:
+    """Text actually embedded for a unit's primary chunk.
+
+    Prepends a deterministic identity header — qualified name, kind,
+    and signature — so retrieval queries that mention a symbol by name
+    match even when the chunk body doesn't repeat it. The header uses
+    the same `or ''` line for missing signatures to keep the layout
+    byte-stable across kinds.
+    """
+    return (
+        f"{unit.qualified_name} ({unit.kind.value})\n"
+        f"{unit.signature or ''}\n"
+        f"{chunk.content}"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class EmbeddingResult:
     chunks: tuple[EmbeddingChunk, ...]
@@ -62,16 +78,17 @@ class EmbeddingPipeline:
 
             all_chunks: list[EmbeddingChunk] = []
             primary_chunks: list[EmbeddingChunk] = []
+            primary_texts: list[str] = []
             for u in ordered:
                 chunks = self._chunker.chunk_unit(u)
                 all_chunks.extend(chunks)
                 if chunks:
                     primary_chunks.append(chunks[0])
+                    primary_texts.append(_embed_text(u, chunks[0]))
 
-            # Batch-embed the primary chunks (one per unit).
-            vectors = await self._embedder.embed_batch(
-                [c.content for c in primary_chunks]
-            )
+            # Batch-embed the primary chunks (one per unit), each with
+            # its identity header prepended.
+            vectors = await self._embedder.embed_batch(primary_texts)
 
             points: list[VectorPoint] = []
             primary_by_unit: dict[str, tuple[EmbeddingChunk, tuple[float, ...]]] = {}

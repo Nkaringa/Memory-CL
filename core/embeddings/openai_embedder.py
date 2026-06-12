@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
@@ -23,6 +24,11 @@ MAX_INPUT_CHARS = 32_000
 _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_SECONDS = 0.5
 
+# OpenAI error bodies can echo the request's API key (e.g. "Incorrect
+# API key provided: sk-..."). Error messages get logged and surfaced to
+# API callers, so any sk-prefixed token is redacted at construction.
+_API_KEY_RE = re.compile(r"sk-[A-Za-z0-9_-]+")
+
 
 class EmbeddingProviderError(RuntimeError):
     """Raised when the embedding provider fails permanently.
@@ -31,10 +37,11 @@ class EmbeddingProviderError(RuntimeError):
     malformed response body, or exhaustion of all retry attempts on
     429/5xx/transport errors. `status_code` is populated when the
     failure came from an HTTP response (None for transport errors).
+    Key material matching `sk-...` is stripped from the message.
     """
 
     def __init__(self, message: str, *, status_code: int | None = None) -> None:
-        super().__init__(message)
+        super().__init__(_API_KEY_RE.sub("sk-***", message))
         self.status_code = status_code
 
 
@@ -141,7 +148,14 @@ class OpenAIEmbedder:
             try:
                 resp = await self._client.post(
                     OPENAI_EMBEDDINGS_URL,
-                    json={"model": self._model, "input": list(batch)},
+                    json={
+                        "model": self._model,
+                        "input": list(batch),
+                        # Pin the output size server-side — without it the
+                        # model's native dimension wins and may not match
+                        # the Qdrant collection.
+                        "dimensions": self._dimension,
+                    },
                 )
             except httpx.HTTPError as exc:
                 # Transport-level failure (DNS, timeout, reset) — retryable.
@@ -180,7 +194,18 @@ class OpenAIEmbedder:
                 )
             # The contract guarantees `index`, not list order — sort.
             ordered = sorted(data, key=lambda d: int(d["index"]))
-            return [tuple(float(x) for x in d["embedding"]) for d in ordered]
+            vectors = [tuple(float(x) for x in d["embedding"]) for d in ordered]
+            # Validate dimension BEFORE anything is stored: a mis-sized
+            # vector would poison the collection (or be rejected by
+            # Qdrant mid-batch, leaving partial writes).
+            for v in vectors:
+                if len(v) != self._dimension:
+                    raise EmbeddingProviderError(
+                        f"OpenAI embeddings returned dimension {len(v)}, "
+                        f"expected {self._dimension}",
+                        status_code=resp.status_code,
+                    )
+            return vectors
         except EmbeddingProviderError:
             raise
         except (KeyError, TypeError, ValueError) as exc:

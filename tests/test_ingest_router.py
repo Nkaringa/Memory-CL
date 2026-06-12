@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import textwrap
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -246,7 +248,7 @@ def test_reembed_happy_path_batches_and_counts(
         "repo_id": "tenant-1",
         "units_total": 5,
         "units_embedded": 5,
-        "failed": 0,
+        "failed_batches": 0,
     }
     # 5 units at batch size 2 → 3 batches against the repo collection.
     assert [len(batch) for batch, _ in fake_pipe.calls] == [2, 2, 1]
@@ -282,10 +284,64 @@ def test_reembed_continues_past_batch_failure(
         "repo_id": "tenant-1",
         "units_total": 5,
         "units_embedded": 3,
-        "failed": 1,
+        "failed_batches": 1,
     }
     assert len(fake_pipe.calls) == 3
     fake_embedder.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reembed_concurrent_same_repo_returns_409(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """I3: a reembed for a repo that already has one in flight is
+    rejected with 409 — it would double-spend on the provider and race
+    the same Qdrant points. The guard is released afterwards."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
+    started = asyncio.Event()
+    gate = asyncio.Event()
+
+    class _BlockingPipeline:
+        async def run(self, units: Sequence[Any], *, collection: str) -> None:
+            started.set()
+            await gate.wait()
+
+    fake_embedder = AsyncMock()
+    monkeypatch.setattr(
+        ingest_router,
+        "_build_embedding_components",
+        lambda state, settings: (_BlockingPipeline(), fake_embedder),
+    )
+    state = _make_state()
+    state.units_repo.list_units_for_repo = AsyncMock(  # type: ignore[method-assign]
+        return_value=[object()]
+    )
+    app = _build_app(state)
+    app.state.app_state = state  # ASGITransport does not run lifespan
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        first = asyncio.create_task(
+            client.post("/ingest/reembed", json={"repo_id": "tenant-1"})
+        )
+        await started.wait()
+        # Same repo while in flight → 409 without touching the provider.
+        # (wait_for so a missing guard fails the test instead of
+        # deadlocking it on the blocked pipeline.)
+        second = await asyncio.wait_for(
+            client.post("/ingest/reembed", json={"repo_id": "tenant-1"}),
+            timeout=5.0,
+        )
+        assert second.status_code == 409
+        assert "in progress" in second.json()["detail"]
+
+        gate.set()
+        resp1 = await first
+        assert resp1.status_code == 200
+
+        # Guard released after completion — a follow-up run succeeds.
+        third = await client.post("/ingest/reembed", json={"repo_id": "tenant-1"})
+        assert third.status_code == 200
 
 
 @pytest.mark.asyncio

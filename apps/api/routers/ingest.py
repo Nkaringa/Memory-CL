@@ -23,6 +23,14 @@ _DEFAULT_VECTOR_SIZE = 1536
 # provider failure only loses one batch, not the whole repo.
 _REEMBED_BATCH_SIZE = 200
 
+# Per-repo in-flight guard: two concurrent reembeds of the same repo
+# would double-spend on the provider and race writes to the same Qdrant
+# points. Plain set is safe here — uvicorn runs a single process and the
+# check-then-add below has no awaits in between, so it's atomic within
+# the event loop. Multi-worker deployments need a shared lock (Redis) —
+# Phase-4 work.
+_REEMBED_IN_FLIGHT: set[str] = set()
+
 
 class IngestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -50,7 +58,9 @@ class ReembedResponse(BaseModel):
     repo_id: str
     units_total: int
     units_embedded: int
-    failed: int
+    # Count of failed BATCHES (each up to _REEMBED_BATCH_SIZE units),
+    # not failed units — named explicitly to avoid misreading.
+    failed_batches: int
 
 
 def _build_embedding_components(
@@ -150,7 +160,8 @@ async def reembed_repo(req: ReembedRequest, state: AppStateDep) -> ReembedRespon
     Use after configuring OPENAI_API_KEY on a deployment that ingested
     with placeholder vectors, or after an embed-degraded ingest. Batches
     are independent: a provider failure skips that batch (counted in
-    `failed`) and the run continues.
+    `failed_batches`) and the run continues. Only one reembed per repo
+    may be in flight at a time — concurrent requests get a 409.
     """
     settings = get_settings()
     if not settings.embeddings_enabled:
@@ -158,31 +169,43 @@ async def reembed_repo(req: ReembedRequest, state: AppStateDep) -> ReembedRespon
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="embeddings are disabled — set OPENAI_API_KEY to enable reembed",
         )
-    components = _build_embedding_components(state, settings)
-    assert components is not None  # embeddings_enabled checked above
-    pipeline, embedder = components
 
-    units = list(await state.units_repo.list_units_for_repo(req.repo_id))
-    collection = f"repo_{req.repo_id}"
-
-    embedded = 0
-    failed = 0
+    # No await between the membership check and the add, so this is
+    # atomic within the event loop (single-process uvicorn).
+    if req.repo_id in _REEMBED_IN_FLIGHT:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"reembed already in progress for repo_id {req.repo_id!r}",
+        )
+    _REEMBED_IN_FLIGHT.add(req.repo_id)
     try:
-        for i in range(0, len(units), _REEMBED_BATCH_SIZE):
-            batch = units[i : i + _REEMBED_BATCH_SIZE]
-            try:
-                await pipeline.run(batch, collection=collection)
-            except Exception:
-                # Batch-level isolation: keep going, report the count.
-                failed += 1
-            else:
-                embedded += len(batch)
+        components = _build_embedding_components(state, settings)
+        assert components is not None  # embeddings_enabled checked above
+        pipeline, embedder = components
+
+        units = list(await state.units_repo.list_units_for_repo(req.repo_id))
+        collection = f"repo_{req.repo_id}"
+
+        embedded = 0
+        failed_batches = 0
+        try:
+            for i in range(0, len(units), _REEMBED_BATCH_SIZE):
+                batch = units[i : i + _REEMBED_BATCH_SIZE]
+                try:
+                    await pipeline.run(batch, collection=collection)
+                except Exception:
+                    # Batch-level isolation: keep going, report the count.
+                    failed_batches += 1
+                else:
+                    embedded += len(batch)
+        finally:
+            await embedder.aclose()
     finally:
-        await embedder.aclose()
+        _REEMBED_IN_FLIGHT.discard(req.repo_id)
 
     return ReembedResponse(
         repo_id=req.repo_id,
         units_total=len(units),
         units_embedded=embedded,
-        failed=failed,
+        failed_batches=failed_batches,
     )
