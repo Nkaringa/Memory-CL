@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from core.ingestion.logevent import emit_phase2_event
 from core.observability import get_tracer
 from schemas import IngestionUnit, Language, UnitKind
-from storage.repositories import RepoSummary
+from storage.repositories import QnameMatch, RepoSummary
 
 _tracer = get_tracer("storage.postgres_repo")
 
@@ -158,6 +158,32 @@ _LIST_REPOS = text(
     "GROUP BY repo_id "
     "ORDER BY repo_id"
 )
+
+
+# Autocomplete over qualified names. Length-first ordering keeps the
+# canonical short qname (e.g. a module) ahead of deep test paths that
+# merely contain it. The bind parameters are all TEXT-compatible except
+# LIMIT, which asyncpg types natively in a top-level statement — no
+# CAST needed here (the CTE-typing issue only bites inside WITH blocks).
+_SEARCH_QNAMES = text(
+    "SELECT qualified_name, kind FROM ingestion_units "
+    "WHERE repo_id = :repo_id AND qualified_name ILIKE :pattern "
+    "ORDER BY length(qualified_name), qualified_name "
+    "LIMIT :limit"
+)
+
+
+def _escape_like(query: str) -> str:
+    """Escape LIKE/ILIKE metacharacters so user input matches literally.
+
+    Backslash first (it is the escape character itself), then the two
+    wildcards.
+    """
+    return (
+        query.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
 
 
 def _row_to_unit(row: Any) -> IngestionUnit:
@@ -323,6 +349,27 @@ class PostgresIngestionRepository:
                     units=int(m["units"]),
                     files=int(m["files"]),
                     languages=tuple(m["languages"] or ()),
+                )
+            )
+        return out
+
+    async def search_qnames(
+        self, repo_id: str, query: str, limit: int = 20
+    ) -> Sequence[QnameMatch]:
+        pattern = f"%{_escape_like(query)}%"
+        async with self._engine.connect() as conn:
+            result = await conn.execute(
+                _SEARCH_QNAMES,
+                {"repo_id": repo_id, "pattern": pattern, "limit": limit},
+            )
+            rows = result.all()
+        out: list[QnameMatch] = []
+        for row in rows:
+            m: Any = row._mapping if hasattr(row, "_mapping") else row
+            out.append(
+                QnameMatch(
+                    qualified_name=m["qualified_name"],
+                    kind=m["kind"],
                 )
             )
         return out

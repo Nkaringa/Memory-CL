@@ -20,6 +20,14 @@ class RepoSummary:
     languages: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class QnameMatch:
+    """One qualified-name autocomplete hit (for the discovery surface)."""
+
+    qualified_name: str
+    kind: str
+
+
 @runtime_checkable
 class IngestionUnitRepository(Protocol):
     """Phase 2 write path for the canonical unit store (Postgres).
@@ -54,6 +62,17 @@ class IngestionUnitRepository(Protocol):
 
     async def list_repos(self) -> Sequence[RepoSummary]:
         """Aggregate per-repo counts for the discovery surface (GET /repos)."""
+        ...
+
+    async def search_qnames(
+        self, repo_id: str, query: str, limit: int = 20
+    ) -> Sequence[QnameMatch]:
+        """Substring search over qualified names (autocomplete surface).
+
+        Matching is case-insensitive; LIKE metacharacters in `query` are
+        treated literally. Shorter qualified names sort first so canonical
+        units beat deeply nested test paths.
+        """
         ...
 
 

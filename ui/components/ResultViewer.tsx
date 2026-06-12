@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { ChevronDown, ChevronRight, Activity, Search, Boxes, GitGraph, Database } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -165,30 +166,34 @@ function RankedRow({
   entry, result, advanced,
 }: { entry: ContextEntry; result: RetrieveResponse; advanced: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const qname = entry.data?.qualified_name as string | undefined;
   return (
     <li className="py-3">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="w-full text-left flex items-center gap-3"
-      >
-        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <div className="flex-1 min-w-0">
-          <div className="font-mono text-sm truncate">
-            {(entry.data?.qualified_name as string) ?? entry.id}
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex-1 min-w-0 text-left flex items-center gap-3"
+        >
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <div className="flex-1 min-w-0">
+            <div className="font-mono text-sm truncate">
+              {qname ?? entry.id}
+            </div>
+            <div className="text-xs muted truncate">
+              {(entry.data?.file_path as string) ?? "—"}
+            </div>
           </div>
-          <div className="text-xs muted truncate">
-            {(entry.data?.file_path as string) ?? "—"}
-          </div>
-        </div>
-        <Badge variant={entry.type === "constraint" || entry.type === "risk" ? "warn" : "muted"}>
-          {entry.type}
-        </Badge>
-        <Badge variant="accent">{fmtScore(entry.score)}</Badge>
-        <span className="text-[10px] muted font-mono">
-          {((entry.data?.channels as string[] | undefined) ?? []).join(",")}
-        </span>
-      </button>
+          <Badge variant={entry.type === "constraint" || entry.type === "risk" ? "warn" : "muted"}>
+            {entry.type}
+          </Badge>
+          <Badge variant="accent">{fmtScore(entry.score)}</Badge>
+          <span className="text-[10px] muted font-mono">
+            {((entry.data?.channels as string[] | undefined) ?? []).join(",")}
+          </span>
+        </button>
+        {qname && <RowActions qname={qname} repoId={result.repo_id} />}
+      </div>
 
       {expanded && (
         <div className="mt-3 pl-6 grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -197,5 +202,45 @@ function RankedRow({
         </div>
       )}
     </li>
+  );
+}
+
+const rowActionClasses =
+  "px-1.5 py-0.5 rounded border border-border text-[10px] muted font-mono " +
+  "hover:text-accent hover:border-accent/50 transition-colors";
+
+/** Per-result quick actions: copy the qualified name, or jump to the
+ *  Graph page with the node + repo pre-filled and auto-traversed. */
+function RowActions({ qname, repoId }: { qname: string; repoId: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  function copy() {
+    navigator.clipboard
+      ?.writeText(qname)
+      .then(() => {
+        setCopied(true);
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => setCopied(false), 1200);
+      })
+      .catch(() => {});
+  }
+
+  return (
+    <span className="flex items-center gap-1 shrink-0">
+      <button type="button" onClick={copy} title="copy qualified_name" className={rowActionClasses}>
+        {copied ? "copied" : "copy"}
+      </button>
+      <Link
+        href={`/graph?node=${encodeURIComponent(qname)}&repo=${encodeURIComponent(repoId)}`}
+        title="open in graph"
+        className={rowActionClasses}
+      >
+        graph →
+      </Link>
+    </span>
   );
 }

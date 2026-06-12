@@ -233,6 +233,57 @@ async def test_list_repos_handles_empty_table_and_null_languages() -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_qnames_executes_select_and_maps_rows() -> None:
+    engine = _FakeEngine()
+    repo = PostgresIngestionRepository(engine=engine)  # type: ignore[arg-type]
+    engine.conn.next_results = [_FakeResult(rows=[
+        {"qualified_name": "app.ats.scorer", "kind": "fn"},
+        {"qualified_name": "tests.app.test_ats_scorer", "kind": "module"},
+    ])]
+
+    matches = await repo.search_qnames("r", "scorer")
+
+    # SQL shape: repo-scoped ILIKE with shortest-qname-first ordering.
+    stmt, params = engine.conn.calls[0]
+    sql = " ".join(stmt.lower().split())
+    assert "select qualified_name, kind from ingestion_units" in sql
+    assert "where repo_id = :repo_id and qualified_name ilike :pattern" in sql
+    assert "order by length(qualified_name), qualified_name" in sql
+    assert "limit :limit" in sql
+    assert params == {"repo_id": "r", "pattern": "%scorer%", "limit": 20}
+
+    assert [(m.qualified_name, m.kind) for m in matches] == [
+        ("app.ats.scorer", "fn"),
+        ("tests.app.test_ats_scorer", "module"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_qnames_escapes_like_metacharacters() -> None:
+    """User input containing %, _ or \\ must match literally, never as
+    LIKE wildcards — otherwise "a_b" would match "axb" and "%" everything.
+    """
+    engine = _FakeEngine()
+    repo = PostgresIngestionRepository(engine=engine)  # type: ignore[arg-type]
+    engine.conn.next_results = [_FakeResult(rows=[])]
+
+    await repo.search_qnames("r", "50%_done\\x", limit=5)
+
+    _, params = engine.conn.calls[0]
+    assert params is not None
+    assert params["pattern"] == "%50\\%\\_done\\\\x%"
+    assert params["limit"] == 5
+
+
+@pytest.mark.asyncio
+async def test_search_qnames_empty_result() -> None:
+    engine = _FakeEngine()
+    repo = PostgresIngestionRepository(engine=engine)  # type: ignore[arg-type]
+    engine.conn.next_results = [_FakeResult(rows=[])]
+    assert await repo.search_qnames("r", "nope") == []
+
+
+@pytest.mark.asyncio
 async def test_upsert_units_counts_only_changed_rows() -> None:
     engine = _FakeEngine()
     repo = PostgresIngestionRepository(engine=engine)  # type: ignore[arg-type]
