@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Play, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fmtMs, truncHash } from "@/lib/utils";
 import type { McpToolResponse } from "@/lib/types";
 import { getMemoryClient } from "@/lib/api";
+import { useRepos } from "@/components/RepoSelect";
 
 interface ToolRunnerProps {
   tool: string;
@@ -18,30 +19,65 @@ interface ToolRunnerProps {
   initialPayload?: Record<string, unknown>;
 }
 
-const DEFAULT_TEMPLATES: Record<string, Record<string, unknown>> = {
-  get_context: { task: "auth flow", repo_id: "acme", top_k: 5 },
-  get_module_summary: { module: "pkg.utils", repo_id: "acme" },
-  get_related_components: { component: "pkg.utils.add", repo_id: "acme", depth: 1 },
-  get_risks: { entity: "pkg.utils.add", repo_id: "acme" },
-  query_graph: { node: "pkg.utils.add", repo_id: "acme", depth: 2 },
-  ingest_repository: {
-    path: "/path/to/repo",
-    repo_id: "acme",
-    commit_sha: "manual",
-  },
-  update_memory: {
-    session_id: "session-1",
-    repo_id: "acme",
-    session_data: { note: "from inspector" },
-  },
-};
+function buildTemplates(repoId: string): Record<string, Record<string, unknown>> {
+  return {
+    get_context: { task: "auth flow", repo_id: repoId, top_k: 5 },
+    get_module_summary: { module: "<module — find one via /retrieve>", repo_id: repoId },
+    get_related_components: {
+      component: "<qualified_name — find one via /retrieve>",
+      repo_id: repoId,
+      depth: 1,
+    },
+    get_risks: { entity: "<qualified_name — find one via /retrieve>", repo_id: repoId },
+    query_graph: {
+      node: "<qualified_name — find one via /retrieve>",
+      repo_id: repoId,
+      depth: 2,
+    },
+    ingest_repository: {
+      path: "/path/to/repo",
+      repo_id: repoId,
+      commit_sha: "manual",
+    },
+    update_memory: {
+      session_id: "session-1",
+      repo_id: repoId,
+      session_data: { note: "from inspector" },
+    },
+  };
+}
 
 export function ToolRunner({ tool, schemaName, initialPayload }: ToolRunnerProps) {
+  const { data: reposData } = useRepos();
+  const firstRepoId = reposData?.repos[0]?.repo_id ?? "<repo-id>";
+
   const start = useMemo(
-    () => initialPayload ?? DEFAULT_TEMPLATES[tool] ?? {},
+    () => initialPayload ?? buildTemplates(firstRepoId)[tool] ?? {},
+    // firstRepoId is intentionally excluded: we only want the initial text to
+    // reflect what was known at mount; users can edit the JSON manually.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [tool, initialPayload],
   );
   const [text, setText] = useState(JSON.stringify(start, null, 2));
+
+  // Once the repos load (after mount), patch the placeholder repo_id in the
+  // textarea if the user hasn't already changed it.
+  useEffect(() => {
+    const firstRepo = reposData?.repos[0];
+    if (!firstRepo) return;
+    const rid = firstRepo.repo_id;
+    setText((prev) => {
+      try {
+        const parsed = JSON.parse(prev) as Record<string, unknown>;
+        if (parsed.repo_id === "<repo-id>") {
+          return JSON.stringify({ ...parsed, repo_id: rid }, null, 2);
+        }
+      } catch {
+        // not parseable — leave as-is
+      }
+      return prev;
+    });
+  }, [reposData]);
   const [pending, setPending] = useState(false);
   const [response, setResponse] = useState<McpToolResponse | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);

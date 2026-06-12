@@ -15,6 +15,7 @@ import type {
   McpToolResponse,
   ReadinessResponse,
   ReplayResponse,
+  ReposResponse,
   RetrieveRequest,
   RetrieveResponse,
   SnapshotResponse,
@@ -66,6 +67,11 @@ export class AsyncMemoryClient {
     this.timeoutMs = opts.timeoutMs ?? 30_000;
     this.fetchImpl = opts.fetchImpl ?? fetch.bind(globalThis);
     this.requestId = opts.requestId ?? defaultRequestId;
+  }
+
+  // ------ repos ------------------------------------------------------------
+  listRepos(): Promise<ReposResponse> {
+    return this.get<ReposResponse>("/repos");
   }
 
   // ------ status -----------------------------------------------------------
@@ -223,4 +229,9 @@ export function getMemoryClient(): AsyncMemoryClient {
     });
   }
   return _client;
+}
+
+/** Convenience wrapper consumed by RepoSelect and ToolRunner. */
+export function listRepos(): Promise<ReposResponse> {
+  return getMemoryClient().listRepos();
 }

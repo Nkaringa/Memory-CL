@@ -5,6 +5,7 @@ import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { RepoSelect } from "@/components/RepoSelect";
 
 export interface QueryBoxValue {
   text: string;
@@ -26,7 +27,7 @@ const UNIT_KIND_OPTIONS = ["mod", "cls", "fn", "mth", "const"];
 
 export function QueryBox({ defaultValue, onSubmit, pending, className }: QueryBoxProps) {
   const [text, setText] = useState(defaultValue?.text ?? "");
-  const [repoId, setRepoId] = useState(defaultValue?.repo_id ?? "acme");
+  const [repoId, setRepoId] = useState(defaultValue?.repo_id ?? "");
   const [topK, setTopK] = useState(defaultValue?.top_k ?? 5);
   const [seedRaw, setSeedRaw] = useState(
     (defaultValue?.seedUnitIds ?? []).join("\n"),
@@ -77,11 +78,7 @@ export function QueryBox({ defaultValue, onSubmit, pending, className }: QueryBo
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
             <label className="block text-xs muted mb-1">repo_id</label>
-            <Input
-              required
-              value={repoId}
-              onChange={(e) => setRepoId(e.target.value)}
-            />
+            <RepoSelect value={repoId} onChange={setRepoId} />
           </div>
           <div>
             <label className="block text-xs muted mb-1">top_k</label>

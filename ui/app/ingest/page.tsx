@@ -18,7 +18,7 @@ import type { IngestResponse } from "@/lib/types";
 
 export default function IngestPage() {
   const [advanced, setAdvanced] = useState(false);
-  const [repoId, setRepoId] = useState("acme");
+  const [repoId, setRepoId] = useState("");
   const [repoPath, setRepoPath] = useState("/path/to/repo");
   const [commitSha, setCommitSha] = useState("manual");
 
@@ -75,6 +75,7 @@ export default function IngestPage() {
                 required
                 value={repoId}
                 onChange={(e) => setRepoId(e.target.value)}
+                placeholder="name for this repo (e.g. my-app)"
               />
             </div>
             <div>

@@ -17,7 +17,7 @@ import { getMemoryClient } from "@/lib/api";
 import type { ReplayResponse, SnapshotResponse } from "@/lib/types";
 
 export default function SnapshotPage() {
-  const [tenantId, setTenantId] = useState("acme-corp");
+  const [tenantId, setTenantId] = useState("");
   const [stateVersion, setStateVersion] = useState("v0");
   const [history, setHistory] = useState<SnapshotResponse[]>([]);
 
@@ -55,6 +55,7 @@ export default function SnapshotPage() {
                 required
                 value={tenantId}
                 onChange={(e) => setTenantId(e.target.value)}
+                placeholder="tenant id (e.g. my-tenant)"
               />
             </div>
             <div>
