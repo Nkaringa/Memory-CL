@@ -40,7 +40,7 @@ from apps.api.lifespan import client_proxy, driver_proxy, engine_proxy
 from core.ingestion import IngestionPipeline, make_context
 from core.ingestion.graph_builder import _UNIT_TO_NODE, GraphBuilder
 from core.ingestion.pipeline import IngestionResult
-from core.parsing import FileWalker, PythonParser, TreeSitterParser
+from core.parsing import DocParser, FileWalker, PythonParser, TreeSitterParser
 from core.retrieval.graph_retriever import GraphRetriever
 from schemas import IngestionUnit, Language, stable_unit_id
 from storage import (
@@ -73,6 +73,7 @@ FIXTURE_CSHARP = Path(__file__).parent.parent / "fixtures" / "sample_repo_csharp
 FIXTURE_GO = Path(__file__).parent.parent / "fixtures" / "sample_repo_go"
 FIXTURE_JAVA = Path(__file__).parent.parent / "fixtures" / "sample_repo_java"
 FIXTURE_RUST = Path(__file__).parent.parent / "fixtures" / "sample_repo_rust"
+FIXTURE_DOCS = Path(__file__).parent.parent / "fixtures" / "sample_repo_docs"
 
 COMMIT_SHA = "feedfacefeedfacefeedfacefeedfacefeedface"
 
@@ -172,6 +173,8 @@ def _expected_units(repo_path: Path, repo_id: str) -> list[IngestionUnit]:
         Language.GO: TreeSitterParser(Language.GO),
         Language.JAVA: TreeSitterParser(Language.JAVA),
         Language.RUST: TreeSitterParser(Language.RUST),
+        Language.MARKDOWN: DocParser(Language.MARKDOWN),
+        Language.TEXT: DocParser(Language.TEXT),
     }
     walk = FileWalker().walk(repo_path, repo_id=repo_id)
     units: list[IngestionUnit] = []
@@ -500,5 +503,83 @@ async def test_golden_batch2_language_roundtrip(
         anchor_id = stable_unit_id(repo_id, anchor_file, anchor_qname_for_id)
         neighbours = await stores.graph_repo.neighbors(anchor_id, depth=2)
         assert neighbours, f"{tag}: neighbors() returned nothing for {anchor_qname_for_id!r}"
+    finally:
+        await _cleanup(stores, repo_id, collection)
+
+
+# ---------------------------------------------------------------------------
+# Docs ingestion round-trip (markdown sections + link edges)
+# ---------------------------------------------------------------------------
+async def test_golden_docs_repo_roundtrip(stores: Stores) -> None:
+    """Markdown/text fixture through the REAL pipeline: section units land
+    in all three stores, Section nodes exist in Neo4j, and a relative
+    markdown link produces a Module-IMPORTS->Module edge."""
+    repo_id = f"golden-docs-{os.getpid()}"
+    collection = f"repo_{repo_id}"
+    try:
+        collection, result = await _ingest(stores, repo_id, FIXTURE_DOCS)
+        assert result.failed_files == ()
+
+        expected = _expected_units(FIXTURE_DOCS, repo_id)
+        assert len(expected) > 0
+        expected_qnames = {u.qualified_name for u in expected}
+        # Pin the fixture shape: 3 README sections, nested guide section,
+        # whole-file txt module. A silently-sectionless parse cannot pass.
+        assert {
+            "README",
+            "README.overview",
+            "README.installation",
+            "README.usage",
+            "docs.guide",
+            "docs.guide.guide",
+            "docs.guide.guide.database",
+            "notes",
+        } == expected_qnames
+
+        assert await _pg_unit_count(stores, repo_id) == len(expected)
+        assert await _pg_qnames(stores, repo_id) == expected_qnames
+
+        nodes, edges = await _neo4j_counts(stores, repo_id)
+        assert nodes > 0
+        assert edges > 0
+        expected_edges = _expected_edge_count(expected)
+        assert edges == expected_edges
+        assert result.metrics["edges_written"] == expected_edges
+
+        assert await stores.qdrant.client.collection_exists(collection_name=collection)
+        assert await _qdrant_point_count(stores, collection) == len(expected)
+
+        # A Section node exists in Neo4j under its own label.
+        overview_id = stable_unit_id(repo_id, "README.md", "README.overview")
+        async with stores.neo4j.driver.session() as session:
+            res = await session.run(
+                "MATCH (n:Section {repo_id: $repo_id, node_id: $node_id}) "
+                "RETURN count(n) AS c",
+                {"repo_id": repo_id, "node_id": overview_id},
+            )
+            rec = await res.single()
+            assert int(rec["c"]) == 1, "README.overview Section node missing"
+
+            # The markdown link edge: README module -IMPORTS-> docs.guide
+            # module (relative `docs/guide.md` target resolved cross-file).
+            readme_id = stable_unit_id(repo_id, "README.md", "README")
+            guide_id = stable_unit_id(repo_id, "docs/guide.md", "docs.guide")
+            res = await session.run(
+                "MATCH (a {node_id: $src})-[r:IMPORTS]->(b {node_id: $dst}) "
+                "RETURN count(r) AS c",
+                {"src": readme_id, "dst": guide_id},
+            )
+            rec = await res.single()
+            assert int(rec["c"]) == 1, "README -IMPORTS-> docs.guide edge missing"
+
+        # Graph traversal works from a section unit.
+        assert await stores.graph_repo.neighbors(overview_id, depth=2)
+
+        # Idempotency through the docs path too.
+        _, again = await _ingest(stores, repo_id, FIXTURE_DOCS)
+        assert again.failed_files == ()
+        assert again.metrics["units_changed"] == 0
+        assert await _pg_unit_count(stores, repo_id) == len(expected)
+        assert await _neo4j_counts(stores, repo_id) == (nodes, edges)
     finally:
         await _cleanup(stores, repo_id, collection)

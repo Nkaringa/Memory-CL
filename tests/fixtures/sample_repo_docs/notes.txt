@@ -1,0 +1,4 @@
+Scratch notes for the docs fixture.
+
+These are plain-text operational notes; the whole file becomes a single
+module unit with no sections.

@@ -33,6 +33,17 @@ def test_root_level_index_and_init_do_not_collapse_to_empty() -> None:
     assert module_qname_from_path("__init__.py") == "__init__"
 
 
+def test_doc_paths() -> None:
+    assert module_qname_from_path("docs/setup.md") == "docs.setup"
+    assert module_qname_from_path("README.md") == "README"
+    assert module_qname_from_path("docs/page.mdx") == "docs.page"
+    assert module_qname_from_path("docs/manual.rst") == "docs.manual"
+    assert module_qname_from_path("notes/todo.txt") == "notes.todo"
+    # No index/README collapse for docs — qnames stay purely path-based.
+    assert module_qname_from_path("docs/index.md") == "docs.index"
+    assert module_qname_from_path("docs/README.md") == "docs.README"
+
+
 def test_graph_builder_mirror_stays_in_sync() -> None:
     """graph_builder inlines a mirror of module_qname_from_path on purpose
     (narrow import surface). This test fails if the two ever drift."""
@@ -44,5 +55,7 @@ def test_graph_builder_mirror_stays_in_sync() -> None:
         "lib/loader.cjs", "top.py", "index.js", "__init__.py",
         "pkg/server/handler.go", "Assets/Scripts/Player.cs",
         "src/main/java/App.java", "src/db/mod.rs", "mod.rs", "pkg/index.go",
+        "docs/setup.md", "README.md", "docs/page.mdx", "docs/manual.rst",
+        "notes/todo.txt", "docs/index.md",
     ):
         assert _module_qname(path) == module_qname_from_path(path), path

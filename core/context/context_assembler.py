@@ -27,6 +27,8 @@ _DEFAULT_UNIT_TYPE_MAP: dict[str, ContextEntryType] = {
     UnitKind.FUNCTION.value: "logic",
     UnitKind.METHOD.value: "logic",
     UnitKind.CONSTANT.value: "code",
+    # Markdown sections describe intent/design — architecture tier.
+    UnitKind.SECTION.value: "architecture",
 }
 
 

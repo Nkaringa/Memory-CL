@@ -19,6 +19,7 @@ class NodeKind(StrEnum):
     FUNCTION = "Function"
     METHOD = "Method"
     CONSTANT = "Constant"
+    SECTION = "Section"    # markdown heading section (docs ingestion)
     EXTERNAL = "External"  # for unresolved import/call targets
 
 
@@ -47,15 +48,20 @@ class EdgeKind(StrEnum):
 EDGE_RULES: tuple[tuple[NodeKind, EdgeKind, frozenset[NodeKind]], ...] = (
     (NodeKind.FILE, EdgeKind.CONTAINS, frozenset({
         NodeKind.MODULE, NodeKind.CLASS, NodeKind.FUNCTION, NodeKind.METHOD,
-        NodeKind.CONSTANT,
+        NodeKind.CONSTANT, NodeKind.SECTION,
     })),
     (NodeKind.MODULE, EdgeKind.DEFINES, frozenset({
-        NodeKind.CLASS, NodeKind.FUNCTION, NodeKind.CONSTANT,
+        NodeKind.CLASS, NodeKind.FUNCTION, NodeKind.CONSTANT, NodeKind.SECTION,
     })),
     (NodeKind.CLASS, EdgeKind.DEFINES, frozenset({
         NodeKind.METHOD, NodeKind.CONSTANT,
     })),
     (NodeKind.MODULE, EdgeKind.IMPORTS, frozenset({
+        NodeKind.MODULE, NodeKind.EXTERNAL,
+    })),
+    # Docs ingestion: a markdown section links ([text](relative/path.md))
+    # to another document or source module.
+    (NodeKind.SECTION, EdgeKind.IMPORTS, frozenset({
         NodeKind.MODULE, NodeKind.EXTERNAL,
     })),
     (NodeKind.FUNCTION, EdgeKind.CALLS, frozenset({
