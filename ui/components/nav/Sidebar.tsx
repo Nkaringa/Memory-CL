@@ -3,75 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Activity,
-  Boxes,
-  Database,
-  FileSearch,
-  GitGraph,
-  ScrollText,
-  ShieldCheck,
-  Sparkles,
-  Terminal,
-  Workflow,
-} from "lucide-react";
+import { FileSearch } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getMemoryClient } from "@/lib/api";
 import { computePosture, PostureBadge } from "@/components/ui/posture-badge";
-
-interface NavItem {
-  href: string;
-  label: string;
-  Icon: typeof Activity;
-  hint: string;
-}
-
-interface NavGroup {
-  label: string;
-  items: NavItem[];
-}
-
-/** Information architecture per Phase-10 polish spec.
- *
- *    Core      — what an agent / engineer reaches for first
- *    System    — operational + audit surfaces
- *    Dev Tools — registry + ad-hoc tool runner
- *
- *  Dashboard sits ABOVE the groups as the always-on home; it's not a
- *  "Core" page — it's the launching pad.
- */
-const NAV_GROUPS: NavGroup[] = [
-  {
-    label: "Core",
-    items: [
-      { href: "/retrieve",  label: "Retrieve",  Icon: Sparkles,  hint: "hybrid + ranked" },
-      { href: "/graph",     label: "Graph",     Icon: GitGraph,  hint: "BFS explorer" },
-      { href: "/ingest",    label: "Ingest",    Icon: Boxes,     hint: "repo intake" },
-    ],
-  },
-  {
-    label: "System",
-    items: [
-      { href: "/status",    label: "Status",    Icon: ShieldCheck, hint: "boot + flags" },
-      { href: "/audit",     label: "Audit",     Icon: ScrollText,  hint: "hash chain" },
-      { href: "/snapshot",  label: "Snapshot",  Icon: Database,    hint: "replay engine" },
-    ],
-  },
-  {
-    label: "Dev Tools",
-    items: [
-      { href: "/mcp",         label: "MCP",         Icon: Workflow, hint: "tool registry" },
-      { href: "/tool-runner", label: "Tool Runner", Icon: Terminal, hint: "ad-hoc invoke" },
-    ],
-  },
-];
-
-const HOME_ITEM: NavItem = {
-  href: "/dashboard",
-  label: "Dashboard",
-  Icon: Activity,
-  hint: "system pulse",
-};
+import {
+  HOME_ITEM,
+  NAV_GROUPS,
+  isActive,
+  type NavItem,
+} from "@/components/nav/nav-items";
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -123,11 +64,6 @@ export function Sidebar() {
       </footer>
     </aside>
   );
-}
-
-function isActive(pathname: string, href: string): boolean {
-  if (href === "/") return pathname === "/";
-  return pathname === href || pathname.startsWith(href + "/");
 }
 
 function NavLink({ item, active }: { item: NavItem; active: boolean }) {
