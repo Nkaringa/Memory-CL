@@ -91,6 +91,20 @@ This is intentional:
 - Real model-backed embedders plug in at the Protocol boundary
   without changing any caller.
 
+### OpenAI provider (Phase-3)
+
+`core/embeddings/openai_embedder.py::OpenAIEmbedder` — production
+embedder using OpenAI's REST API:
+
+- **Model:** `text-embedding-3-small`, **1536-dim** — matches the
+  existing Qdrant collections; no schema migration needed.
+- **Enable:** set `OPENAI_API_KEY` in your environment (`.env`,
+  secret manager, or `docker-compose` override). Empty / absent key
+  → `DeterministicEmbedder` placeholder behavior is preserved; the
+  vector channel returns 0 hits.
+- **Backfill:** `POST /ingest/reembed {repo_id}` re-embeds all
+  stored units for a repo. CLI: `memcl reembed --repo-id <id>`.
+
 ## Embedding pipeline
 
 `core/embeddings/embedding_pipeline.py::EmbeddingPipeline`:

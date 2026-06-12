@@ -4,6 +4,7 @@ import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from core.ingestion.context import IngestionContext, IngestionMetrics
 from core.ingestion.graph_builder import _UNIT_TO_NODE, GraphBuilder
@@ -12,6 +13,12 @@ from core.observability import get_tracer
 from core.parsing import FileWalker, PythonParser, SourceParser, TreeSitterParser
 from schemas import FileRef, IngestionUnit, Language, NodeKind
 from storage.repositories import VectorPoint
+
+if TYPE_CHECKING:
+    # Runtime import would be circular: core.embeddings pulls in
+    # core.compression, which reaches storage and back into
+    # core.ingestion. The pipeline only needs the name for typing.
+    from core.embeddings import EmbeddingPipeline
 
 _tracer = get_tracer("core.ingestion.pipeline")
 
@@ -49,10 +56,15 @@ class IngestionPipeline:
         walker: FileWalker | None = None,
         parsers: dict[Language, SourceParser] | None = None,
         builder: GraphBuilder | None = None,
+        embedding_pipeline: EmbeddingPipeline | None = None,
     ) -> None:
         self._walker = walker or FileWalker()
         self._parsers = parsers if parsers is not None else _default_parsers()
         self._builder = builder or GraphBuilder()
+        # Phase 3: when present, changed units get real vectors right
+        # after the placeholder payload write. None preserves the
+        # pre-Phase-3 placeholder-only behavior.
+        self._embedding_pipeline = embedding_pipeline
 
     async def run(self, ctx: IngestionContext) -> IngestionResult:
         run_start = time.perf_counter()
@@ -192,6 +204,7 @@ class IngestionPipeline:
             existing = await ctx.units_repo.list_units_for_file(
                 ctx.repo_id, file_ref.path
             )
+            existing_sha = {u.unit_id: u.source_sha for u in existing}
             obsolete = [u for u in existing if u.unit_id not in new_ids]
             if obsolete:
                 # The protocol exposes delete-per-file only, so we wipe
@@ -216,7 +229,32 @@ class IngestionPipeline:
             ctx.metrics.nodes_written += n_nodes
             ctx.metrics.edges_written += n_edges
 
-            # Qdrant payloads (no vectors yet)
+            # Phase 3: a unit is "changed" when its id is new OR its
+            # source_sha differs from the row we just reconciled against.
+            # When the obsolete path wiped the file's vector footprint
+            # above, every surviving unit lost its vector with it — they
+            # all need fresh points and re-embeds.
+            if obsolete:
+                changed_units = list(units)
+            else:
+                changed_units = [
+                    u
+                    for u in units
+                    if existing_sha.get(u.unit_id) != u.source_sha
+                ]
+
+            # Qdrant payloads (no vectors yet). Qdrant upsert replaces
+            # whole points, so with an embedding pipeline wired we write
+            # placeholders ONLY for changed units — unchanged units'
+            # points already exist with real vectors and rewriting them
+            # would zero those vectors out (data loss). Without an
+            # embedding pipeline every point is a placeholder anyway, so
+            # the all-units write is harmless and keeps payload metadata
+            # fresh. (The wipe path above is covered either way:
+            # changed_units == all units of the file there.)
+            placeholder_units = (
+                changed_units if self._embedding_pipeline is not None else units
+            )
             points = [
                 VectorPoint(
                     point_id=u.unit_id,
@@ -229,10 +267,37 @@ class IngestionPipeline:
                     commit_sha=u.commit_sha,
                     source_sha=u.source_sha,
                 )
-                for u in units
+                for u in placeholder_units
             ]
-            n_vecs = await ctx.vector_repo.upsert_payloads(ctx.units_collection, points)
+            n_vecs = 0
+            if points:
+                n_vecs = await ctx.vector_repo.upsert_payloads(
+                    ctx.units_collection, points
+                )
             ctx.metrics.vector_payloads_written += n_vecs
+
+            if self._embedding_pipeline is not None and changed_units:
+                embed_start = time.perf_counter()
+                try:
+                    await self._embedding_pipeline.run(
+                        changed_units, collection=ctx.units_collection
+                    )
+                except Exception as exc:
+                    # Never fail ingest on embedding errors — the
+                    # placeholder points written above stay in place and
+                    # a later `/ingest/reembed` can backfill.
+                    emit_phase2_event(
+                        event="embed_failed",
+                        operation="ingestion.embed_units",
+                        status="degraded",
+                        duration_ms=(time.perf_counter() - embed_start) * 1000,
+                        file_path=file_ref.path,
+                        level="warning",
+                        units=len(changed_units),
+                        error=str(exc),
+                    )
+                else:
+                    ctx.metrics.units_embedded += len(changed_units)
 
             emit_phase2_event(
                 event="ingest_file_ok",

@@ -24,6 +24,7 @@ from sdk.types import (
     IngestResult,
     McpToolResult,
     QueryGraphResult,
+    ReembedResult,
     ReplayResult,
     RetrieveResult,
     SnapshotResult,
@@ -103,6 +104,12 @@ class AsyncMemoryClient:
         return IngestResult.model_validate(await self._post_json(
             "/ingest",
             {"repo_id": repo_id, "repo_path": repo_path, "commit_sha": commit_sha},
+        ))
+
+    async def reembed_repository(self, *, repo_id: str) -> ReembedResult:
+        """Backfill real vectors for an ingested repo via POST /ingest/reembed."""
+        return ReembedResult.model_validate(await self._post_json(
+            "/ingest/reembed", {"repo_id": repo_id},
         ))
 
     # ----- retrieval -----

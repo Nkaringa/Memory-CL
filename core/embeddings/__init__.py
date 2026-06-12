@@ -5,6 +5,10 @@ from core.embeddings.embedder import (
     EmbedderName,
 )
 from core.embeddings.embedding_pipeline import EmbeddingPipeline
+from core.embeddings.openai_embedder import (
+    EmbeddingProviderError,
+    OpenAIEmbedder,
+)
 
 __all__ = [
     "ChunkingStrategy",
@@ -12,4 +16,6 @@ __all__ = [
     "Embedder",
     "EmbedderName",
     "EmbeddingPipeline",
+    "EmbeddingProviderError",
+    "OpenAIEmbedder",
 ]

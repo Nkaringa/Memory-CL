@@ -32,6 +32,15 @@ def _build_fake_api() -> FastAPI:
             "failed_files": [],
         }
 
+    @app.post("/ingest/reembed")
+    async def reembed(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "repo_id": body["repo_id"],
+            "units_total": 5,
+            "units_embedded": 5,
+            "failed_batches": 0,
+        }
+
     @app.post("/retrieve")
     async def retrieve(body: dict[str, Any]):
         return {
@@ -131,6 +140,16 @@ async def test_sdk_ingest_repository(asgi_transport: httpx.ASGITransport) -> Non
 
 
 @pytest.mark.asyncio
+async def test_sdk_reembed_repository(asgi_transport: httpx.ASGITransport) -> None:
+    async with AsyncMemoryClient(base_url="http://t", transport=asgi_transport) as c:
+        res = await c.reembed_repository(repo_id="acme")
+    assert res.repo_id == "acme"
+    assert res.units_total == 5
+    assert res.units_embedded == 5
+    assert res.failed_batches == 0
+
+
+@pytest.mark.asyncio
 async def test_sdk_retrieve(asgi_transport: httpx.ASGITransport) -> None:
     async with AsyncMemoryClient(base_url="http://t", transport=asgi_transport) as c:
         res = await c.retrieve(text="auth", repo_id="acme", top_k=3)
@@ -214,7 +233,7 @@ def test_cli_parser_exposes_all_subcommands() -> None:
         a for a in parser._actions  # type: ignore[attr-defined]
         if isinstance(a, type(parser._subparsers._group_actions[0]))  # type: ignore[attr-defined]
     )
-    expected = {"ingest", "query", "graph", "snapshot", "replay", "status"}
+    expected = {"ingest", "reembed", "query", "graph", "snapshot", "replay", "status"}
     assert expected.issubset(set(sub.choices.keys()))
 
 
@@ -262,6 +281,29 @@ def test_cli_query_dispatches_through_sdk(
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["repo_id"] == "acme"
+
+
+def test_cli_reembed_dispatches_through_sdk(
+    asgi_transport: httpx.ASGITransport,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apps.cli import main as cli_module
+    real_client = cli_module.AsyncMemoryClient  # type: ignore[attr-defined]
+
+    class _Patched(real_client):  # type: ignore[misc, valid-type]
+        def __init__(self, **kwargs: Any) -> None:
+            kwargs["transport"] = asgi_transport
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(cli_module, "AsyncMemoryClient", _Patched)
+    rc = cli_main(["reembed", "--repo-id", "acme"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "failed_batches": 0, "repo_id": "acme", "units_embedded": 5,
+        "units_total": 5,
+    }
 
 
 def test_cli_emits_structured_error_on_http_failure(

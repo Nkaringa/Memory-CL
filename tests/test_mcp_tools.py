@@ -343,6 +343,68 @@ async def test_ingest_repository_runs_pipeline(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ingest_repository_wires_embedding_pipeline_when_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MCP ingest builds the same Phase-3 embedding stack as the HTTP
+    router: changed units get real vectors and the embedder's HTTP
+    client is closed after the run."""
+    from core.mcp.tools import ingest_tool as ingest_tool_module
+
+    (tmp_path / "m.py").write_text("def f(): return 1\n")
+    state = _state(pg_rows=[])
+    state.units_repo.list_units_for_file = AsyncMock(return_value=[])
+    state.units_repo.delete_units_for_file = AsyncMock(return_value=0)
+    state.units_repo.upsert_units = AsyncMock(side_effect=lambda u: len(list(u)))
+    state.graph_repo.delete_subgraph_for_file = AsyncMock(return_value=0)
+    state.graph_repo.upsert_nodes = AsyncMock(side_effect=lambda n: len(list(n)))
+    state.graph_repo.upsert_edges = AsyncMock(side_effect=lambda e: len(list(e)))
+    state.vector_repo.delete_points_for_file = AsyncMock(return_value=0)
+    state.vector_repo.upsert_payloads = AsyncMock(side_effect=lambda c, p: len(list(p)))
+
+    class _FakePipe:
+        def __init__(self) -> None:
+            self.calls: list[tuple[list[Any], str]] = []
+
+        async def run(self, units, *, collection):
+            self.calls.append((list(units), collection))
+
+    fake_pipe = _FakePipe()
+    fake_embedder = AsyncMock()
+    fake_embedder.dimension = 1536
+    monkeypatch.setattr(
+        ingest_tool_module,
+        "_build_embedding_components",
+        lambda vector_repo: (fake_pipe, fake_embedder),
+    )
+
+    resp = await ToolExecutor(build_default_registry()).execute(
+        "ingest_repository",
+        {"path": str(tmp_path), "repo_id": "acme", "commit_sha": "deadbeef"},
+        ctx=_ctx(state),
+    )
+    assert resp.status.value == "success"
+    # Fresh repo: every emitted unit got embedded against the repo
+    # collection, and the embedder was closed afterwards.
+    assert fake_pipe.calls
+    assert all(coll == "repo_acme" for _, coll in fake_pipe.calls)
+    assert resp.data["metrics"]["units_embedded"] == resp.data["metrics"]["units_emitted"]
+    fake_embedder.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ingest_repository_stays_placeholder_only_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No OPENAI_API_KEY → the MCP tool builds no embedding stack."""
+    from core.mcp.tools import ingest_tool as ingest_tool_module
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    get_settings.cache_clear()
+    assert ingest_tool_module._build_embedding_components(AsyncMock()) is None
+
+
+@pytest.mark.asyncio
 async def test_ingest_repository_returns_error_for_missing_path() -> None:
     state = _state()
     resp = await ToolExecutor(build_default_registry()).execute(

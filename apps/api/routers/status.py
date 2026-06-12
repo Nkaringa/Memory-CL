@@ -47,6 +47,7 @@ class StatusResponse(BaseModel):
     boot_stages: list[BootStageView]
     mcp_tool_count: int
     schema_version: str
+    embeddings_enabled: bool
 
 
 @router.get("", response_model=StatusResponse)
@@ -100,4 +101,5 @@ async def status_summary(
         ],
         mcp_tool_count=len(registry.names()) if registry else 0,
         schema_version=SCHEMA_VERSION,
+        embeddings_enabled=settings.embeddings_enabled,
     )

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
@@ -16,6 +16,11 @@ import type { RetrieveResponse } from "@/lib/types";
 
 export default function RetrievePage() {
   const [lastQuery, setLastQuery] = useState<QueryBoxValue | null>(null);
+  const { data: statusData } = useQuery({
+    queryKey: ["status"],
+    queryFn: () => getMemoryClient().status(),
+    staleTime: 60_000,
+  });
   const mutation = useMutation<RetrieveResponse, Error, QueryBoxValue>({
     mutationFn: async (q) => {
       return getMemoryClient().retrieve({
@@ -35,17 +40,19 @@ export default function RetrievePage() {
       <PageHeader
         eyebrow="core"
         title="Retrieve"
-        description="Hybrid retrieval over Phase-2 graph + keyword metadata + Phase-4 ranking; Phase-3 vectors pending. Every result carries its breakdown."
+        description="Hybrid retrieval over graph + keyword metadata + optional semantic vectors + Phase-4 ranking. Every result carries its breakdown."
         crumbs={[{ label: "Core" }, { label: "Retrieve" }]}
       />
 
       <FirstRunCard />
 
-      <div className="mb-6 rounded-md border border-warn/40 bg-warn/[0.06] px-4 py-3 text-sm text-warn/90 leading-relaxed">
-        <strong className="font-semibold">Note:</strong> Semantic vectors are not enabled yet
-        (Phase-3 pending) — the vector channel returns 0 hits by design. Graph and keyword
-        channels are live.
-      </div>
+      {statusData && statusData.embeddings_enabled === false && (
+        <div className="mb-6 rounded-md border border-warn/40 bg-warn/[0.06] px-4 py-3 text-sm text-warn/90 leading-relaxed">
+          <strong className="font-semibold">Note:</strong> Semantic vectors are not enabled yet
+          (Phase-3 pending) — the vector channel returns 0 hits by design. Graph and keyword
+          channels are live.
+        </div>
+      )}
 
       <Card className="mb-6">
         <CardHeader>

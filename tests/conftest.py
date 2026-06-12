@@ -17,6 +17,10 @@ from storage.base import StorageHealth
 os.environ.setdefault("LOG_LEVEL", "INFO")
 os.environ.setdefault("LOG_FORMAT", "console")
 os.environ.setdefault("OTEL_ENABLED", "false")
+# A real key in the host env would flip embeddings_enabled on and make
+# ingest tests construct a live OpenAIEmbedder. Tests that need the
+# enabled path opt in via monkeypatch.setenv + a fake pipeline.
+os.environ.pop("OPENAI_API_KEY", None)
 
 
 @pytest.fixture(autouse=True)

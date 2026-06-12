@@ -29,7 +29,7 @@ const CHANNEL_META: Record<string, {
   label: string;
   hint: string;
 }> = {
-  vector:   { Icon: Search,   label: "vector",   hint: "vector channel pending Phase-3; currently contributes 0" },
+  vector:   { Icon: Search,   label: "vector",   hint: "semantic similarity over embedded units (requires embeddings enabled)" },
   graph:    { Icon: GitGraph, label: "graph",    hint: "BFS proximity from the seed node" },
   metadata: { Icon: Database, label: "metadata", hint: "ILIKE match on canonical Postgres" },
 };

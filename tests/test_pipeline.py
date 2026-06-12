@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import textwrap
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
 from core.ingestion import IngestionPipeline, make_context
-from schemas import GraphEdge, GraphNode
+from schemas import GraphEdge, GraphNode, IngestionUnit
 
 
 def _make_repo(tmp_path: Path) -> Path:
@@ -221,6 +222,388 @@ async def test_pipeline_is_deterministic(tmp_path: Path) -> None:
     second = captured_runs[half:]
     for a, b in zip(first, second, strict=True):
         assert [n.node_id for n in a] == [n.node_id for n in b]
+
+
+# ---- Phase 3: embedding wiring ---------------------------------------------
+class _RecordingEmbeddingPipeline:
+    """Stand-in for EmbeddingPipeline that records every run() call."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[tuple[list[IngestionUnit], str]] = []
+        self._fail = fail
+
+    async def run(
+        self, units: Sequence[IngestionUnit], *, collection: str
+    ) -> None:
+        self.calls.append((list(units), collection))
+        if self._fail:
+            raise RuntimeError("simulated provider outage")
+
+
+def _embedded_unit_ids(pipe: _RecordingEmbeddingPipeline) -> set[str]:
+    return {u.unit_id for units, _ in pipe.calls for u in units}
+
+
+@pytest.mark.asyncio
+async def test_pipeline_embeds_all_units_on_first_ingest(tmp_path: Path) -> None:
+    (tmp_path / "m.py").write_text("def f(): return 1\n\ndef g(): return f()\n")
+    units_repo = _fake_units_repo()
+    captured: list[IngestionUnit] = []
+
+    async def _capture(units: Iterable[IngestionUnit]) -> int:
+        batch = list(units)
+        captured.extend(batch)
+        return len(batch)
+
+    units_repo.upsert_units = AsyncMock(side_effect=_capture)
+    embed_pipe = _RecordingEmbeddingPipeline()
+
+    ctx = make_context(
+        repo_id="r1",
+        repo_path=tmp_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=units_repo,
+        graph_repo=_fake_graph_repo(),
+        vector_repo=_fake_vector_repo(),
+    )
+    result = await IngestionPipeline(
+        embedding_pipeline=embed_pipe,  # type: ignore[arg-type]
+    ).run(ctx)
+
+    # Fresh repo: every unit is new, so every unit gets embedded.
+    assert _embedded_unit_ids(embed_pipe) == {u.unit_id for u in captured}
+    assert all(coll == "repo_r1" for _, coll in embed_pipe.calls)
+    assert result.metrics["units_embedded"] == len(captured)
+    assert result.failed_files == ()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_embeds_only_changed_units(tmp_path: Path) -> None:
+    (tmp_path / "m.py").write_text("def f(): return 1\n\ndef g(): return f()\n")
+    units_repo = _fake_units_repo()
+    captured: list[IngestionUnit] = []
+
+    async def _capture(units: Iterable[IngestionUnit]) -> int:
+        batch = list(units)
+        captured.extend(batch)
+        return len(batch)
+
+    units_repo.upsert_units = AsyncMock(side_effect=_capture)
+    # Run 1 (no embedder) just captures the real units + their shas.
+    ctx = make_context(
+        repo_id="r1",
+        repo_path=tmp_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=units_repo,
+        graph_repo=_fake_graph_repo(),
+        vector_repo=_fake_vector_repo(),
+    )
+    await IngestionPipeline().run(ctx)
+    assert captured
+
+    # Run 2: existing rows match run 1 except `g`, whose stored sha is
+    # stale — only `g` may be embedded.
+    existing = [
+        u if u.name != "g" else u.model_copy(update={"source_sha": "stale"})
+        for u in captured
+    ]
+    changed_id = next(u.unit_id for u in captured if u.name == "g")
+    units_repo2 = _fake_units_repo()
+    units_repo2.list_units_for_file = AsyncMock(
+        side_effect=lambda repo_id, fp: [u for u in existing if u.file_path == fp]
+    )
+    embed_pipe = _RecordingEmbeddingPipeline()
+    ctx2 = make_context(
+        repo_id="r1",
+        repo_path=tmp_path,
+        commit_sha="c2",
+        units_collection="repo_r1",
+        units_repo=units_repo2,
+        graph_repo=_fake_graph_repo(),
+        vector_repo=_fake_vector_repo(),
+    )
+    result = await IngestionPipeline(
+        embedding_pipeline=embed_pipe,  # type: ignore[arg-type]
+    ).run(ctx2)
+
+    assert _embedded_unit_ids(embed_pipe) == {changed_id}
+    assert result.metrics["units_embedded"] == 1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_skips_embedding_when_nothing_changed(tmp_path: Path) -> None:
+    (tmp_path / "m.py").write_text("def f(): return 1\n")
+    units_repo = _fake_units_repo()
+    captured: list[IngestionUnit] = []
+
+    async def _capture(units: Iterable[IngestionUnit]) -> int:
+        batch = list(units)
+        captured.extend(batch)
+        return len(batch)
+
+    units_repo.upsert_units = AsyncMock(side_effect=_capture)
+    ctx = make_context(
+        repo_id="r1",
+        repo_path=tmp_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=units_repo,
+        graph_repo=_fake_graph_repo(),
+        vector_repo=_fake_vector_repo(),
+    )
+    await IngestionPipeline().run(ctx)
+
+    units_repo2 = _fake_units_repo()
+    units_repo2.list_units_for_file = AsyncMock(
+        side_effect=lambda repo_id, fp: [u for u in captured if u.file_path == fp]
+    )
+    embed_pipe = _RecordingEmbeddingPipeline()
+    ctx2 = make_context(
+        repo_id="r1",
+        repo_path=tmp_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=units_repo2,
+        graph_repo=_fake_graph_repo(),
+        vector_repo=_fake_vector_repo(),
+    )
+    result = await IngestionPipeline(
+        embedding_pipeline=embed_pipe,  # type: ignore[arg-type]
+    ).run(ctx2)
+
+    assert embed_pipe.calls == []
+    assert result.metrics["units_embedded"] == 0
+
+
+@pytest.mark.asyncio
+async def test_pipeline_without_embedder_reports_zero_embedded(tmp_path: Path) -> None:
+    (tmp_path / "m.py").write_text("def f(): return 1\n")
+    ctx = make_context(
+        repo_id="r1",
+        repo_path=tmp_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=_fake_units_repo(),
+        graph_repo=_fake_graph_repo(),
+        vector_repo=_fake_vector_repo(),
+    )
+    result = await IngestionPipeline().run(ctx)
+
+    assert result.failed_files == ()
+    assert result.metrics["units_embedded"] == 0
+    assert result.metrics["vector_payloads_written"] > 0
+
+
+@pytest.mark.asyncio
+async def test_pipeline_embed_failure_does_not_fail_ingest(tmp_path: Path) -> None:
+    (tmp_path / "m.py").write_text("def f(): return 1\n")
+    units_repo = _fake_units_repo()
+    vector_repo = _fake_vector_repo()
+    embed_pipe = _RecordingEmbeddingPipeline(fail=True)
+
+    ctx = make_context(
+        repo_id="r1",
+        repo_path=tmp_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=units_repo,
+        graph_repo=_fake_graph_repo(),
+        vector_repo=vector_repo,
+    )
+    result = await IngestionPipeline(
+        embedding_pipeline=embed_pipe,  # type: ignore[arg-type]
+    ).run(ctx)
+
+    # Embedding was attempted and blew up — ingest still succeeds and
+    # the placeholder points remain (degraded, not failed).
+    assert embed_pipe.calls
+    assert result.failed_files == ()
+    assert result.metrics["files_failed"] == 0
+    assert result.metrics["units_embedded"] == 0
+    assert result.metrics["vector_payloads_written"] > 0
+    assert vector_repo.upsert_payloads.await_count >= 1
+
+
+def _placeholder_point_ids(vector_repo: AsyncMock) -> set[str]:
+    """Every point_id passed to upsert_payloads across all calls."""
+    ids: set[str] = set()
+    for call in vector_repo.upsert_payloads.await_args_list:
+        ids |= {p.point_id for p in call.args[1]}
+    return ids
+
+
+async def _first_run_capture(
+    tmp_path: Path,
+) -> list[IngestionUnit]:
+    """Run the pipeline once (no embedder) and capture the real units."""
+    captured: list[IngestionUnit] = []
+    units_repo = _fake_units_repo()
+
+    async def _capture(units: Iterable[IngestionUnit]) -> int:
+        batch = list(units)
+        captured.extend(batch)
+        return len(batch)
+
+    units_repo.upsert_units = AsyncMock(side_effect=_capture)
+    ctx = make_context(
+        repo_id="r1",
+        repo_path=tmp_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=units_repo,
+        graph_repo=_fake_graph_repo(),
+        vector_repo=_fake_vector_repo(),
+    )
+    await IngestionPipeline().run(ctx)
+    assert captured
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_reingest_unchanged_never_rewrites_placeholder_points(
+    tmp_path: Path,
+) -> None:
+    """C1 regression: re-ingesting identical content with an embedding
+    pipeline wired must NOT upsert placeholder points — Qdrant upsert
+    replaces whole points, so a placeholder write would zero out the
+    real vectors of every unchanged unit."""
+    (tmp_path / "m.py").write_text("def f(): return 1\n\ndef g(): return f()\n")
+    captured = await _first_run_capture(tmp_path)
+
+    units_repo2 = _fake_units_repo()
+    units_repo2.list_units_for_file = AsyncMock(
+        side_effect=lambda repo_id, fp: [u for u in captured if u.file_path == fp]
+    )
+    vector_repo2 = _fake_vector_repo()
+    embed_pipe = _RecordingEmbeddingPipeline()
+    ctx2 = make_context(
+        repo_id="r1",
+        repo_path=tmp_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=units_repo2,
+        graph_repo=_fake_graph_repo(),
+        vector_repo=vector_repo2,
+    )
+    result = await IngestionPipeline(
+        embedding_pipeline=embed_pipe,  # type: ignore[arg-type]
+    ).run(ctx2)
+
+    # Nothing changed → zero placeholder upserts AND zero embed calls.
+    vector_repo2.upsert_payloads.assert_not_awaited()
+    assert embed_pipe.calls == []
+    assert result.metrics["vector_payloads_written"] == 0
+    assert result.metrics["units_embedded"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reingest_one_changed_unit_placeholders_and_embeds_only_it(
+    tmp_path: Path,
+) -> None:
+    """C1: with an embedding pipeline wired, only the changed unit gets
+    a placeholder upsert (and an embedding) — unchanged units' real
+    vectors stay untouched."""
+    (tmp_path / "m.py").write_text("def f(): return 1\n\ndef g(): return f()\n")
+    captured = await _first_run_capture(tmp_path)
+
+    # Existing rows match run 1 except `g`, whose stored sha is stale.
+    existing = [
+        u if u.name != "g" else u.model_copy(update={"source_sha": "stale"})
+        for u in captured
+    ]
+    changed_id = next(u.unit_id for u in captured if u.name == "g")
+    units_repo2 = _fake_units_repo()
+    units_repo2.list_units_for_file = AsyncMock(
+        side_effect=lambda repo_id, fp: [u for u in existing if u.file_path == fp]
+    )
+    vector_repo2 = _fake_vector_repo()
+    embed_pipe = _RecordingEmbeddingPipeline()
+    ctx2 = make_context(
+        repo_id="r1",
+        repo_path=tmp_path,
+        commit_sha="c2",
+        units_collection="repo_r1",
+        units_repo=units_repo2,
+        graph_repo=_fake_graph_repo(),
+        vector_repo=vector_repo2,
+    )
+    result = await IngestionPipeline(
+        embedding_pipeline=embed_pipe,  # type: ignore[arg-type]
+    ).run(ctx2)
+
+    assert _placeholder_point_ids(vector_repo2) == {changed_id}
+    assert _embedded_unit_ids(embed_pipe) == {changed_id}
+    assert result.metrics["units_embedded"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_wipe_rewrites_and_reembeds_all_units(
+    tmp_path: Path,
+) -> None:
+    """C1: the obsolete-unit path deletes the file's whole vector
+    footprint, so ALL surviving units must get fresh placeholder points
+    and re-embeds afterwards."""
+    (tmp_path / "m.py").write_text("def f(): return 1\n\ndef g(): return f()\n")
+    captured = await _first_run_capture(tmp_path)
+
+    # A ghost row triggers the whole-file wipe; every current unit is
+    # otherwise unchanged.
+    ghost = AsyncMock(unit_id="ghost-id-not-in-current-batch", source_sha="x")
+    existing = [*captured, ghost]
+    units_repo2 = _fake_units_repo()
+    units_repo2.list_units_for_file = AsyncMock(return_value=existing)
+    vector_repo2 = _fake_vector_repo()
+    embed_pipe = _RecordingEmbeddingPipeline()
+    ctx2 = make_context(
+        repo_id="r1",
+        repo_path=tmp_path,
+        commit_sha="c2",
+        units_collection="repo_r1",
+        units_repo=units_repo2,
+        graph_repo=_fake_graph_repo(),
+        vector_repo=vector_repo2,
+    )
+    result = await IngestionPipeline(
+        embedding_pipeline=embed_pipe,  # type: ignore[arg-type]
+    ).run(ctx2)
+
+    all_ids = {u.unit_id for u in captured}
+    vector_repo2.delete_points_for_file.assert_awaited()
+    assert _placeholder_point_ids(vector_repo2) == all_ids
+    assert _embedded_unit_ids(embed_pipe) == all_ids
+    assert result.metrics["units_embedded"] == len(all_ids)
+
+
+@pytest.mark.asyncio
+async def test_reingest_unchanged_without_embedder_keeps_placeholder_writes(
+    tmp_path: Path,
+) -> None:
+    """Without an embedding pipeline every point is a placeholder, so
+    the all-units placeholder write stays (harmless, keeps payload
+    metadata fresh)."""
+    (tmp_path / "m.py").write_text("def f(): return 1\n")
+    captured = await _first_run_capture(tmp_path)
+
+    units_repo2 = _fake_units_repo()
+    units_repo2.list_units_for_file = AsyncMock(
+        side_effect=lambda repo_id, fp: [u for u in captured if u.file_path == fp]
+    )
+    vector_repo2 = _fake_vector_repo()
+    ctx2 = make_context(
+        repo_id="r1",
+        repo_path=tmp_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=units_repo2,
+        graph_repo=_fake_graph_repo(),
+        vector_repo=vector_repo2,
+    )
+    result = await IngestionPipeline().run(ctx2)
+
+    assert _placeholder_point_ids(vector_repo2) == {u.unit_id for u in captured}
+    assert result.metrics["vector_payloads_written"] == len(captured)
 
 
 def _make_polyglot_repo(tmp_path: Path) -> Path:

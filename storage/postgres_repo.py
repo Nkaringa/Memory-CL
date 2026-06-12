@@ -136,6 +136,11 @@ _SELECT_FOR_FILE = text(
     "WHERE repo_id = :repo_id AND file_path = :file_path "
     "ORDER BY line_start, qualified_name"
 )
+_SELECT_FOR_REPO = text(
+    "SELECT * FROM ingestion_units "
+    "WHERE repo_id = :repo_id "
+    "ORDER BY file_path, line_start, qualified_name"
+)
 _DELETE_FOR_FILE = text(
     "DELETE FROM ingestion_units "
     "WHERE repo_id = :repo_id AND file_path = :file_path"
@@ -298,6 +303,11 @@ class PostgresIngestionRepository:
             result = await conn.execute(
                 _SELECT_FOR_FILE, {"repo_id": repo_id, "file_path": file_path}
             )
+            return [_row_to_unit(r) for r in result.all()]
+
+    async def list_units_for_repo(self, repo_id: str) -> Sequence[IngestionUnit]:
+        async with self._engine.connect() as conn:
+            result = await conn.execute(_SELECT_FOR_REPO, {"repo_id": repo_id})
             return [_row_to_unit(r) for r in result.all()]
 
     async def list_repos(self) -> Sequence[RepoSummary]:

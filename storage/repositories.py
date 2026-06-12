@@ -44,6 +44,10 @@ class IngestionUnitRepository(Protocol):
         self, repo_id: str, file_path: str
     ) -> Sequence[IngestionUnit]: ...
 
+    async def list_units_for_repo(self, repo_id: str) -> Sequence[IngestionUnit]:
+        """Every unit in the repo — drives the reembed backfill surface."""
+        ...
+
     async def delete_units_for_file(self, repo_id: str, file_path: str) -> int:
         """Used during file-level reconciliation (rename/remove)."""
         ...

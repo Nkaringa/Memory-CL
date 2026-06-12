@@ -169,3 +169,23 @@ def test_status_returns_full_posture() -> None:
     # FeatureFlagRegistry surfaced.
     flag_names = {f["name"] for f in body["feature_flags"]}
     assert "ui_enabled" in flag_names
+
+
+def test_status_embeddings_enabled_false_when_no_key(monkeypatch) -> None:
+    """embeddings_enabled=False when OPENAI_API_KEY is absent."""
+    get_settings.cache_clear()
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_app()
+    with TestClient(app) as client:
+        body = client.get("/status").json()
+    assert body["embeddings_enabled"] is False
+
+
+def test_status_embeddings_enabled_true_when_key_set(monkeypatch) -> None:
+    """embeddings_enabled=True when OPENAI_API_KEY has a non-empty value."""
+    get_settings.cache_clear()
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-abc123")
+    app = _build_app()
+    with TestClient(app) as client:
+        body = client.get("/status").json()
+    assert body["embeddings_enabled"] is True
