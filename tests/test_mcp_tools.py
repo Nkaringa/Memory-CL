@@ -92,6 +92,7 @@ def _state(pg_rows=None, qdrant_hits=None, neighbors=None,
 
     graph_repo = AsyncMock()
     graph_repo.neighbors = AsyncMock(return_value=neighbors or [])
+    graph_repo.edges_among = AsyncMock(return_value=[])
 
     vector_repo = AsyncMock()
     vector_repo.ensure_collection = AsyncMock()

@@ -121,14 +121,6 @@ export interface GraphQueryEdge {
   dst_id: string;
 }
 
-/** `data` payload of a successful `query_graph` MCP response. */
-export interface QueryGraphData {
-  candidates: GraphQueryCandidate[];
-  /** Absent or [] on older / degraded backends — UI falls back to the
-   *  seed→node reachability projection. */
-  edges?: GraphQueryEdge[];
-}
-
 // ---- Ingestion ------------------------------------------------------------
 export interface IngestRequest {
   repo_id: string;

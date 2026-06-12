@@ -32,6 +32,8 @@ const EDGE_COLORS: Record<string, string> = {
   IMPORTS: "#5b7da6",  // muted blue
   DEFINES: "#3d444d",  // faint gray, barely above the border tone
   CONTAINS: "#3d444d", // faint gray — structural, not semantic
+  INHERITS: "#a371f7", // purple-ish — type hierarchy
+  REFERENCES: "#3d444d", // faint gray, same as DEFINES/CONTAINS
 };
 
 /** Last path segment(s) of a qualified name, capped for canvas legibility.
