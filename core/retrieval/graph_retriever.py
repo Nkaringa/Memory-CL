@@ -75,10 +75,37 @@ class GraphRetriever:
 
             visited: dict[str, GraphHit] = {}
             # Each queue entry carries the discovered GraphNode (or None
-            # for seeds) so visit-on-pop has access to the metadata.
-            queue: deque[tuple[str, int, GraphNode | None]] = deque(
-                (seed, 0, None) for seed in sorted(set(seeds))  # determinism
-            )
+            # for seeds that couldn't be hydrated) so visit-on-pop has
+            # access to the metadata. Seeds are hydrated via the source's
+            # optional `get_node` so depth-0 candidates carry
+            # qualified_name/kind/file_path instead of nulls; sources
+            # without `get_node` (e.g. test fakes) degrade to None.
+            get_node = getattr(self._source, "get_node", None)
+            queue: deque[tuple[str, int, GraphNode | None]] = deque()
+            for seed in sorted(set(seeds)):  # determinism
+                seed_node: GraphNode | None = None
+                if get_node is not None:
+                    try:
+                        fetched = await get_node(seed)
+                    except Exception as exc:
+                        emit_phase4_event(
+                            event="graph_seed_hydrate_failed",
+                            operation="graph_search",
+                            status="degraded",
+                            latency_ms=(time.perf_counter() - start) * 1000,
+                            query_id=query_id,
+                            repo_id=repo_id,
+                            level="warning",
+                            error=str(exc),
+                            seed=seed,
+                        )
+                    else:
+                        # Guard against non-GraphNode returns (mock
+                        # sources auto-create `get_node`); anything
+                        # else degrades to the legacy null seed.
+                        if isinstance(fetched, GraphNode):
+                            seed_node = fetched
+                queue.append((seed, 0, seed_node))
 
             # Visit-on-pop (not on-discover): a node's neighbors are
             # reached via their queue entry, never skipped because they

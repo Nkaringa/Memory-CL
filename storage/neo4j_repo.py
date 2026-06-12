@@ -59,6 +59,8 @@ _NEIGHBORS_QUERY_TEMPLATE = (
 
 _MAX_NEIGHBOR_DEPTH = 10  # mirrors the MCP request schema's upper bound
 
+_GET_NODE_QUERY = "MATCH (n {node_id: $node_id}) RETURN n LIMIT 1"
+
 _DELETE_FOR_FILE = (
     "MATCH (n {repo_id: $repo_id, file_path: $file_path}) "
     "DETACH DELETE n "
@@ -194,6 +196,19 @@ class Neo4jGraphRepository:
             return len(edges)
 
     # ----- Reads -----
+    async def get_node(self, node_id: str) -> GraphNode | None:
+        """Point-lookup of a single node; None when it doesn't exist.
+
+        Used by the graph retriever to hydrate seed metadata so depth-0
+        candidates carry qualified_name/kind/file_path.
+        """
+        async with self._driver.session(database=self._database) as session:
+            result = await session.run(_GET_NODE_QUERY, {"node_id": node_id})
+            records = await result.data()
+        if not records:
+            return None
+        return _record_to_node(records[0]["n"])
+
     async def neighbors(
         self,
         node_id: str,

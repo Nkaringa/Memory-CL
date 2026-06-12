@@ -156,6 +156,49 @@ async def test_delete_units_returns_rowcount() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_repos_executes_aggregate_and_maps_rows() -> None:
+    engine = _FakeEngine()
+    repo = PostgresIngestionRepository(engine=engine)  # type: ignore[arg-type]
+    engine.conn.next_results = [_FakeResult(rows=[
+        {"repo_id": "alpha", "units": 10, "files": 4, "languages": ["python"]},
+        {"repo_id": "beta", "units": 2, "files": 1,
+         "languages": ["python", "typescript"]},
+    ])]
+    repos = await repo.list_repos()
+
+    # SQL shape: one aggregate over ingestion_units, no bind params.
+    stmt, params = engine.conn.calls[0]
+    sql = " ".join(stmt.lower().split())
+    assert "from ingestion_units" in sql
+    assert "group by repo_id" in sql
+    assert "order by repo_id" in sql
+    assert "count(distinct file_path)" in sql
+    assert "array_agg(distinct language)" in sql
+    assert params is None
+
+    assert [r.repo_id for r in repos] == ["alpha", "beta"]
+    assert repos[0].units == 10
+    assert repos[0].files == 4
+    assert repos[0].languages == ("python",)
+    assert repos[1].languages == ("python", "typescript")
+
+
+@pytest.mark.asyncio
+async def test_list_repos_handles_empty_table_and_null_languages() -> None:
+    engine = _FakeEngine()
+    repo = PostgresIngestionRepository(engine=engine)  # type: ignore[arg-type]
+
+    engine.conn.next_results = [_FakeResult(rows=[])]
+    assert await repo.list_repos() == []
+
+    engine.conn.next_results = [_FakeResult(rows=[
+        {"repo_id": "r", "units": 1, "files": 1, "languages": None},
+    ])]
+    repos = await repo.list_repos()
+    assert repos[0].languages == ()
+
+
+@pytest.mark.asyncio
 async def test_upsert_units_counts_only_changed_rows() -> None:
     engine = _FakeEngine()
     repo = PostgresIngestionRepository(engine=engine)  # type: ignore[arg-type]

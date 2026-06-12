@@ -153,6 +153,36 @@ async def test_delete_subgraph_returns_deleted_count() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_node_returns_hydrated_node() -> None:
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    driver.session_obj.next_results = [_FakeResult([
+        {"n": {"node_id": "u1", "kind": "Function", "repo_id": "r",
+               "qualified_name": "pkg.m.f", "name": "f",
+               "file_path": "pkg/m.py"}},
+    ])]
+    node = await repo.get_node("u1")
+
+    assert node is not None
+    assert node.node_id == "u1"
+    assert node.kind == NodeKind.FUNCTION
+    assert node.qualified_name == "pkg.m.f"
+    assert node.file_path == "pkg/m.py"
+
+    stmt, params = driver.session_obj.runs[-1]
+    assert "LIMIT 1" in stmt
+    assert params["node_id"] == "u1"
+
+
+@pytest.mark.asyncio
+async def test_get_node_returns_none_when_missing() -> None:
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    driver.session_obj.next_results = [_FakeResult([])]
+    assert await repo.get_node("ghost") is None
+
+
+@pytest.mark.asyncio
 async def test_neighbors_sorted_by_node_id() -> None:
     driver = _FakeDriver()
     repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]

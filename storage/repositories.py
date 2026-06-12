@@ -10,6 +10,16 @@ from schemas import GraphEdge, GraphNode, IngestionUnit
 # ---------------------------------------------------------------------------
 # Postgres — durable canonical store for IngestionUnits
 # ---------------------------------------------------------------------------
+@dataclass(frozen=True, slots=True)
+class RepoSummary:
+    """Aggregate view of one ingested repo (for discovery surfaces)."""
+
+    repo_id: str
+    units: int
+    files: int
+    languages: tuple[str, ...]
+
+
 @runtime_checkable
 class IngestionUnitRepository(Protocol):
     """Phase 2 write path for the canonical unit store (Postgres).
@@ -36,6 +46,10 @@ class IngestionUnitRepository(Protocol):
 
     async def delete_units_for_file(self, repo_id: str, file_path: str) -> int:
         """Used during file-level reconciliation (rename/remove)."""
+        ...
+
+    async def list_repos(self) -> Sequence[RepoSummary]:
+        """Aggregate per-repo counts for the discovery surface (GET /repos)."""
         ...
 
 

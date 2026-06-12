@@ -106,6 +106,59 @@ async def test_graph_retriever_is_deterministic_for_unsorted_seeds() -> None:
     assert [c.unit_id for c in a] == [c.unit_id for c in b]
 
 
+@pytest.mark.asyncio
+async def test_graph_retriever_hydrates_seed_metadata_via_get_node() -> None:
+    """A source exposing `get_node` fills depth-0 candidate metadata."""
+    class _SourceWithGetNode:
+        async def neighbors(self, node_id, edge_kinds=None, depth=1):
+            return []
+
+        async def get_node(self, node_id):
+            return _gnode(node_id, qname="pkg.m.seed")
+
+    cands = await GraphRetriever(_SourceWithGetNode(), max_depth=2).search(["seed"])
+
+    assert [c.unit_id for c in cands] == ["seed"]
+    assert cands[0].qualified_name == "pkg.m.seed"
+    assert cands[0].kind == NodeKind.FUNCTION.value
+    assert cands[0].file_path == "f.py"
+    assert cands[0].raw_score == 1.0
+
+
+@pytest.mark.asyncio
+async def test_graph_retriever_without_get_node_keeps_null_seed_metadata() -> None:
+    """Backward compat: sources lacking `get_node` still work, seeds null."""
+    class _LegacySource:
+        async def neighbors(self, node_id, edge_kinds=None, depth=1):
+            return []
+
+    cands = await GraphRetriever(_LegacySource(), max_depth=2).search(["seed"])
+
+    assert [c.unit_id for c in cands] == ["seed"]
+    assert cands[0].qualified_name is None
+    assert cands[0].kind is None
+    assert cands[0].file_path is None
+
+
+@pytest.mark.asyncio
+async def test_graph_retriever_seed_hydration_failure_degrades_to_null() -> None:
+    """`get_node` raising must not abort the search — seed stays null."""
+    class _FailingGetNode:
+        async def neighbors(self, node_id, edge_kinds=None, depth=1):
+            return [_gnode("a")] if node_id == "seed" else []
+
+        async def get_node(self, node_id):
+            raise RuntimeError("neo4j down")
+
+    cands = await GraphRetriever(_FailingGetNode(), max_depth=2).search(["seed"])
+
+    by_id = {c.unit_id: c for c in cands}
+    assert set(by_id) == {"seed", "a"}
+    assert by_id["seed"].qualified_name is None
+    # Discovered neighbors still carry their metadata as before.
+    assert by_id["a"].qualified_name == "a"
+
+
 # =========================================================================
 #                              VectorRetriever
 # =========================================================================
