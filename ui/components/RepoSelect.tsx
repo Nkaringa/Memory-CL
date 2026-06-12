@@ -15,7 +15,7 @@ export interface RepoSelectProps {
 /** Shared query hook — other components (e.g. ToolRunner) can call this
  *  to get the same cached repos list without re-fetching. */
 export function useRepos() {
-  return useQuery({ queryKey: ["repos"], queryFn: listRepos });
+  return useQuery({ queryKey: ["repos"], queryFn: listRepos, retry: 1 });
 }
 
 const selectClasses = cn(
@@ -30,10 +30,14 @@ export function RepoSelect({ value, onChange, id }: RepoSelectProps) {
   const { data, isLoading, isError } = useRepos();
   const repos = data?.repos ?? [];
 
-  // Auto-select the first repo once data arrives, if nothing is selected yet.
+  // Auto-select the first repo once data arrives, if nothing is selected
+  // yet — and self-heal a stale value (e.g. from a deep-link or a deleted
+  // repo) that isn't in the loaded list, so the <select> never silently
+  // renders an option that doesn't exist.
   useEffect(() => {
     const first = repos[0];
-    if (first && value === "") {
+    if (!first) return;
+    if (value === "" || !repos.some((r) => r.repo_id === value)) {
       onChange(first.repo_id);
     }
   }, [repos, value, onChange]);

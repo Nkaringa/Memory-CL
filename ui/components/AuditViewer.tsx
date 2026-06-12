@@ -150,7 +150,7 @@ export function AuditViewer({
                   {verify.intact && (
                     <p className="text-[11px] muted leading-relaxed">
                       Every prev_hash matches its predecessor's hash. The
-                      Phase-7 hash-chain integrity property holds for all{" "}
+                      Phase-8 hash-chain integrity property holds for all{" "}
                       {verify.chain_length} entries.
                     </p>
                   )}

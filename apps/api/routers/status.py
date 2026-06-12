@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 from apps.api.dependencies import AppStateDep
 from core import get_settings
+from core.ranking.feature_weights import FEATURE_WEIGHTS
 
 router = APIRouter(prefix="/status", tags=["status"])
 
@@ -35,6 +36,18 @@ class SafeModeView(BaseModel):
     mode: str = "off"
 
 
+class FeatureWeightsView(BaseModel):
+    """The five mandated Phase-4 ranking weights, served so the UI never
+    has to hardcode them (drift risk flagged in reviews)."""
+
+    model_config = ConfigDict(extra="forbid")
+    semantic: float
+    graph: float
+    recency: float
+    importance: float
+    feedback: float
+
+
 class StatusResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     service: str
@@ -48,6 +61,7 @@ class StatusResponse(BaseModel):
     mcp_tool_count: int
     schema_version: str
     embeddings_enabled: bool
+    feature_weights: FeatureWeightsView
 
 
 @router.get("", response_model=StatusResponse)
@@ -102,4 +116,11 @@ async def status_summary(
         mcp_tool_count=len(registry.names()) if registry else 0,
         schema_version=SCHEMA_VERSION,
         embeddings_enabled=settings.embeddings_enabled,
+        feature_weights=FeatureWeightsView(
+            semantic=FEATURE_WEIGHTS.semantic,
+            graph=FEATURE_WEIGHTS.graph,
+            recency=FEATURE_WEIGHTS.recency,
+            importance=FEATURE_WEIGHTS.importance,
+            feedback=FEATURE_WEIGHTS.feedback,
+        ),
     )

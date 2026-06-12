@@ -31,7 +31,7 @@ const KEY_DESCRIPTIONS: Record<typeof COMPONENT_KEYS[number], string> = {
   retrieval_config_hash: "Hash of FeatureWeights and threshold knobs that drive ranking.",
   schema_version: "Global wire-schema version from schemas.base.",
   mcp_registry_hash: "MCP tool names + request schemas (any registry change ⇒ different hash).",
-  state_version_token: "Phase-6/8 monotonic version token. Advances on every state mutation.",
+  state_version_token: "Phase-8 monotonic version token. Advances on every state mutation.",
 };
 
 export function SnapshotDiff({ left, right, className }: SnapshotDiffProps) {

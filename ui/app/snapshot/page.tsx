@@ -50,8 +50,9 @@ export default function SnapshotPage() {
             className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3"
           >
             <div>
-              <label className="text-xs muted block mb-1">tenant_id</label>
+              <label htmlFor="snap-tenant-id" className="text-xs muted block mb-1">tenant_id</label>
               <Input
+                id="snap-tenant-id"
                 required
                 value={tenantId}
                 onChange={(e) => setTenantId(e.target.value)}
@@ -59,8 +60,9 @@ export default function SnapshotPage() {
               />
             </div>
             <div>
-              <label className="text-xs muted block mb-1">state_version_token</label>
+              <label htmlFor="snap-state-version" className="text-xs muted block mb-1">state_version_token</label>
               <Input
+                id="snap-state-version"
                 value={stateVersion}
                 onChange={(e) => setStateVersion(e.target.value)}
               />
@@ -161,18 +163,20 @@ function ReplayPanel({ snapshotId }: { snapshotId: string | null }) {
       <CardContent className="space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="text-xs muted block mb-1">payload (JSON)</label>
+            <label htmlFor="replay-payload" className="text-xs muted block mb-1">payload (JSON)</label>
             <Textarea
+              id="replay-payload"
               rows={6}
               value={payload}
               onChange={(e) => setPayload(e.target.value)}
             />
           </div>
           <div>
-            <label className="text-xs muted block mb-1">
+            <label htmlFor="replay-expected" className="text-xs muted block mb-1">
               expected_output (JSON, optional)
             </label>
             <Textarea
+              id="replay-expected"
               rows={6}
               value={expected}
               onChange={(e) => setExpected(e.target.value)}

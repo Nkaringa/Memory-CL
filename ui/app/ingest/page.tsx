@@ -61,8 +61,9 @@ export default function IngestPage() {
             className="grid grid-cols-1 md:grid-cols-[1fr_200px_180px_auto] gap-3"
           >
             <div>
-              <label className="text-xs muted block mb-1">repo_path</label>
+              <label htmlFor="ingest-repo-path" className="text-xs muted block mb-1">repo_path</label>
               <Input
+                id="ingest-repo-path"
                 required
                 value={repoPath}
                 onChange={(e) => setRepoPath(e.target.value)}
@@ -70,8 +71,9 @@ export default function IngestPage() {
               />
             </div>
             <div>
-              <label className="text-xs muted block mb-1">repo_id</label>
+              <label htmlFor="ingest-repo-id" className="text-xs muted block mb-1">repo_id</label>
               <Input
+                id="ingest-repo-id"
                 required
                 value={repoId}
                 onChange={(e) => setRepoId(e.target.value)}
@@ -79,8 +81,9 @@ export default function IngestPage() {
               />
             </div>
             <div>
-              <label className="text-xs muted block mb-1">commit_sha</label>
+              <label htmlFor="ingest-commit-sha" className="text-xs muted block mb-1">commit_sha</label>
               <Input
+                id="ingest-commit-sha"
                 value={commitSha}
                 onChange={(e) => setCommitSha(e.target.value)}
               />

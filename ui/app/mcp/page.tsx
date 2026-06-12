@@ -97,6 +97,7 @@ export default function McpPage() {
             <ToolRunner
               tool={currentEntry.name}
               schemaName={currentEntry.request_schema}
+              schema={currentEntry.schema}
             />
           ) : !tools.isLoading ? (
             <EmptyState

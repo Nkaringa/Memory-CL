@@ -95,8 +95,9 @@ function GraphPageInner() {
             className="grid grid-cols-1 md:grid-cols-[1fr_180px_120px_auto] gap-3"
           >
             <div>
-              <label className="text-xs muted block mb-1">node</label>
+              <label htmlFor="graph-node" className="text-xs muted block mb-1">node</label>
               <QnameInput
+                id="graph-node"
                 required
                 value={node}
                 onChange={setNode}
@@ -105,12 +106,13 @@ function GraphPageInner() {
               />
             </div>
             <div>
-              <label className="text-xs muted block mb-1">repo_id</label>
-              <RepoSelect value={repoId} onChange={setRepoId} />
+              <label htmlFor="graph-repo" className="text-xs muted block mb-1">repo_id</label>
+              <RepoSelect id="graph-repo" value={repoId} onChange={setRepoId} />
             </div>
             <div>
-              <label className="text-xs muted block mb-1">depth</label>
+              <label htmlFor="graph-depth" className="text-xs muted block mb-1">depth</label>
               <Input
+                id="graph-depth"
                 type="number"
                 min={1}
                 max={5}
