@@ -52,7 +52,7 @@ export default function GraphPage() {
       <PageHeader
         eyebrow="core"
         title="Graph"
-        description="BFS over the Phase-2 graph (Neo4j). EXTERNAL nodes are dimmed; edges are seed→neighbor projections at the requested depth."
+        description="BFS over the Phase-2 graph (Neo4j). EXTERNAL nodes are dimmed; edges are the stored typed relationships (older backends fall back to seed→neighbor projections)."
         crumbs={[{ label: "Core" }, { label: "Graph" }]}
       />
 

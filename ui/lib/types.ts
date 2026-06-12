@@ -103,6 +103,32 @@ export interface RetrieveResponse {
   latency_ms: number;
 }
 
+// ---- Graph (query_graph tool) ---------------------------------------------
+export interface GraphQueryCandidate {
+  unit_id: string;
+  qualified_name: string | null;
+  kind: string | null;
+  file_path: string | null;
+  raw_score: number;
+  channel: string;
+  depth: number | null;
+}
+
+/** Real directed edge among returned candidates (backend ≥ ff56ac0). */
+export interface GraphQueryEdge {
+  src_id: string;
+  kind: string;
+  dst_id: string;
+}
+
+/** `data` payload of a successful `query_graph` MCP response. */
+export interface QueryGraphData {
+  candidates: GraphQueryCandidate[];
+  /** Absent or [] on older / degraded backends — UI falls back to the
+   *  seed→node reachability projection. */
+  edges?: GraphQueryEdge[];
+}
+
 // ---- Ingestion ------------------------------------------------------------
 export interface IngestRequest {
   repo_id: string;
