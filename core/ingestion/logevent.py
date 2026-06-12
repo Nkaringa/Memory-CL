@@ -6,7 +6,7 @@ from core.logging import get_logger
 
 _log = get_logger("phase_2")
 
-LogStatus = Literal["success", "failed", "partial"]
+LogStatus = Literal["success", "failed", "partial", "degraded"]
 
 
 def emit_phase2_event(

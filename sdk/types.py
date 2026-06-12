@@ -23,6 +23,13 @@ class IngestResult(_SdkBase):
     failed_files: list[str]
 
 
+class ReembedResult(_SdkBase):
+    repo_id: str
+    units_total: int
+    units_embedded: int
+    failed: int
+
+
 class RetrieveResult(_SdkBase):
     query_id: str
     repo_id: str

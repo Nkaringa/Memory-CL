@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import textwrap
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -130,6 +132,160 @@ def test_ingest_request_validation() -> None:
             },
         )
         assert resp.status_code == 422
+
+
+# ---- Phase 3: embedding wiring + reembed backfill ---------------------------
+class _RecordingEmbeddingPipeline:
+    def __init__(self, *, fail_on_call: int | None = None) -> None:
+        self.calls: list[tuple[list[Any], str]] = []
+        self._fail_on_call = fail_on_call
+
+    async def run(self, units: Sequence[Any], *, collection: str) -> None:
+        self.calls.append((list(units), collection))
+        if self._fail_on_call == len(self.calls):
+            raise RuntimeError("simulated provider outage")
+
+
+def test_ingest_embeds_units_when_embeddings_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
+    fake_pipe = _RecordingEmbeddingPipeline()
+    fake_embedder = AsyncMock()
+    monkeypatch.setattr(
+        ingest_router,
+        "_build_embedding_components",
+        lambda state, settings: (fake_pipe, fake_embedder),
+    )
+    state = _make_state()
+    app = _build_app(state)
+    repo_path = _make_repo(tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/ingest",
+            json={
+                "repo_id": "tenant-1",
+                "repo_path": str(repo_path),
+                "commit_sha": "abc123",
+            },
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # Fresh repo: every emitted unit got embedded.
+    assert body["metrics"]["units_embedded"] == body["metrics"]["units_emitted"]
+    assert fake_pipe.calls
+    assert all(coll == "repo_tenant-1" for _, coll in fake_pipe.calls)
+    # The embedder's HTTP client is closed after the request.
+    fake_embedder.aclose.assert_awaited_once()
+
+
+def test_ingest_reports_zero_embedded_when_embeddings_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    state = _make_state()
+    app = _build_app(state)
+    repo_path = _make_repo(tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/ingest",
+            json={
+                "repo_id": "tenant-1",
+                "repo_path": str(repo_path),
+                "commit_sha": "abc123",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["metrics"]["units_embedded"] == 0
+
+
+def test_reembed_rejected_when_embeddings_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    state = _make_state()
+    app = _build_app(state)
+
+    with TestClient(app) as client:
+        resp = client.post("/ingest/reembed", json={"repo_id": "tenant-1"})
+
+    assert resp.status_code == 400
+    assert "OPENAI_API_KEY" in resp.json()["detail"]
+    cast(AsyncMock, state.units_repo.list_units_for_repo).assert_not_awaited()
+
+
+def test_reembed_happy_path_batches_and_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
+    fake_pipe = _RecordingEmbeddingPipeline()
+    fake_embedder = AsyncMock()
+    monkeypatch.setattr(
+        ingest_router,
+        "_build_embedding_components",
+        lambda state, settings: (fake_pipe, fake_embedder),
+    )
+    monkeypatch.setattr(ingest_router, "_REEMBED_BATCH_SIZE", 2)
+
+    state = _make_state()
+    units = [object() for _ in range(5)]
+    state.units_repo.list_units_for_repo = AsyncMock(  # type: ignore[method-assign]
+        return_value=units
+    )
+    app = _build_app(state)
+
+    with TestClient(app) as client:
+        resp = client.post("/ingest/reembed", json={"repo_id": "tenant-1"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "repo_id": "tenant-1",
+        "units_total": 5,
+        "units_embedded": 5,
+        "failed": 0,
+    }
+    # 5 units at batch size 2 → 3 batches against the repo collection.
+    assert [len(batch) for batch, _ in fake_pipe.calls] == [2, 2, 1]
+    assert all(coll == "repo_tenant-1" for _, coll in fake_pipe.calls)
+    fake_embedder.aclose.assert_awaited_once()
+
+
+def test_reembed_continues_past_batch_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
+    fake_pipe = _RecordingEmbeddingPipeline(fail_on_call=2)
+    fake_embedder = AsyncMock()
+    monkeypatch.setattr(
+        ingest_router,
+        "_build_embedding_components",
+        lambda state, settings: (fake_pipe, fake_embedder),
+    )
+    monkeypatch.setattr(ingest_router, "_REEMBED_BATCH_SIZE", 2)
+
+    state = _make_state()
+    state.units_repo.list_units_for_repo = AsyncMock(  # type: ignore[method-assign]
+        return_value=[object() for _ in range(5)]
+    )
+    app = _build_app(state)
+
+    with TestClient(app) as client:
+        resp = client.post("/ingest/reembed", json={"repo_id": "tenant-1"})
+
+    assert resp.status_code == 200
+    # Batch 2 (2 units) failed; batches 1 and 3 (2 + 1 units) succeeded.
+    assert resp.json() == {
+        "repo_id": "tenant-1",
+        "units_total": 5,
+        "units_embedded": 3,
+        "failed": 1,
+    }
+    assert len(fake_pipe.calls) == 3
+    fake_embedder.aclose.assert_awaited_once()
 
 
 @pytest.mark.asyncio

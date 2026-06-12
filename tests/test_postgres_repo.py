@@ -156,6 +156,40 @@ async def test_delete_units_returns_rowcount() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_units_for_repo_executes_select_and_maps_rows() -> None:
+    engine = _FakeEngine()
+    repo = PostgresIngestionRepository(engine=engine)  # type: ignore[arg-type]
+    u = _unit()
+    # _unit_to_params produces exactly the column mapping a SELECT *
+    # row would carry, so it doubles as a fake row here.
+    engine.conn.next_results = [_FakeResult(rows=[_unit_to_params(u)])]
+
+    units = await repo.list_units_for_repo("r")
+
+    # SQL shape: repo-scoped SELECT with a deterministic ORDER BY.
+    stmt, params = engine.conn.calls[0]
+    sql = " ".join(stmt.lower().split())
+    assert "from ingestion_units" in sql
+    assert "where repo_id = :repo_id" in sql
+    assert "order by file_path, line_start, qualified_name" in sql
+    assert "file_path =" not in sql  # whole repo, not one file
+    assert params == {"repo_id": "r"}
+
+    assert len(units) == 1
+    assert units[0].unit_id == u.unit_id
+    assert units[0].qualified_name == "pkg.m.f"
+    assert units[0].source_sha == u.source_sha
+
+
+@pytest.mark.asyncio
+async def test_list_units_for_repo_empty() -> None:
+    engine = _FakeEngine()
+    repo = PostgresIngestionRepository(engine=engine)  # type: ignore[arg-type]
+    engine.conn.next_results = [_FakeResult(rows=[])]
+    assert await repo.list_units_for_repo("r") == []
+
+
+@pytest.mark.asyncio
 async def test_list_repos_executes_aggregate_and_maps_rows() -> None:
     engine = _FakeEngine()
     repo = PostgresIngestionRepository(engine=engine)  # type: ignore[arg-type]

@@ -22,6 +22,7 @@ class IngestionMetrics:
     nodes_written: int = 0
     edges_written: int = 0
     vector_payloads_written: int = 0
+    units_embedded: int = 0
     duration_ms: float = 0.0
 
     def as_dict(self) -> dict[str, float | int]:
@@ -34,6 +35,7 @@ class IngestionMetrics:
             "nodes_written": self.nodes_written,
             "edges_written": self.edges_written,
             "vector_payloads_written": self.vector_payloads_written,
+            "units_embedded": self.units_embedded,
             "duration_ms": round(self.duration_ms, 3),
         }
 

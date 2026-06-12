@@ -45,6 +45,12 @@ async def _cmd_ingest(client: AsyncMemoryClient, args: argparse.Namespace) -> in
     return 0
 
 
+async def _cmd_reembed(client: AsyncMemoryClient, args: argparse.Namespace) -> int:
+    res = await client.reembed_repository(repo_id=args.repo_id)
+    _emit(res.model_dump(mode="json"))
+    return 0
+
+
 async def _cmd_query(client: AsyncMemoryClient, args: argparse.Namespace) -> int:
     res = await client.retrieve(
         text=args.text, repo_id=args.repo_id, top_k=args.top_k,
@@ -128,6 +134,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_ingest.add_argument("--repo-id", required=True)
     p_ingest.add_argument("--commit-sha", default="manual")
     p_ingest.set_defaults(func=_cmd_ingest)
+
+    p_reembed = sub.add_parser(
+        "reembed", help="Backfill real vectors for an already-ingested repo"
+    )
+    p_reembed.add_argument("--repo-id", required=True)
+    p_reembed.set_defaults(func=_cmd_reembed)
 
     p_query = sub.add_parser("query", help="Run hybrid retrieval")
     p_query.add_argument("text", help="Query text")
