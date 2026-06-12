@@ -51,6 +51,8 @@ _DDL_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS ix_units_repo_file ON ingestion_units (repo_id, file_path)",
     "CREATE INDEX IF NOT EXISTS ix_units_repo_qname ON ingestion_units (repo_id, qualified_name)",
     "CREATE INDEX IF NOT EXISTS ix_units_repo_kind ON ingestion_units (repo_id, kind)",
+    "CREATE EXTENSION IF NOT EXISTS pg_trgm",
+    "CREATE INDEX IF NOT EXISTS ix_units_qname_trgm ON ingestion_units USING gin (qualified_name gin_trgm_ops)",
 )
 
 # Idempotent upsert: only updates when source_sha actually changed. The

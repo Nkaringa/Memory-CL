@@ -29,6 +29,9 @@ export function QnameInput({
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
 
+  // Close suggestions whenever the selected repo changes.
+  useEffect(() => setOpen(false), [repoId]);
+
   // 250 ms debounce so rapid typing doesn't flood the API.
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(value), 250);
@@ -65,7 +68,9 @@ export function QnameInput({
       setActive((i) => Math.min(i + 1, matches.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActive((i) => Math.max(i - 1, 0));
+      // Wrap to the last item when moving up from the unselected (-1) state
+      // or from the first item, so the full list is reachable by keyboard.
+      setActive((i) => (i <= 0 ? matches.length - 1 : i - 1));
     } else if (e.key === "Enter") {
       const hit = active >= 0 ? matches[active] : undefined;
       if (hit) {
@@ -74,6 +79,11 @@ export function QnameInput({
       }
     }
   }
+
+  // Stable ids for the listbox and each option so aria-controls /
+  // aria-activedescendant can reference them correctly.
+  const listboxId = id ? `${id}-listbox` : "qname-listbox";
+  const optionId = (i: number) => `${listboxId}-opt-${i}`;
 
   return (
     <div className="relative">
@@ -93,9 +103,12 @@ export function QnameInput({
         role="combobox"
         aria-expanded={showList}
         aria-autocomplete="list"
+        aria-controls={listboxId}
+        aria-activedescendant={active >= 0 ? optionId(active) : undefined}
       />
       {showList && (
         <ul
+          id={listboxId}
           role="listbox"
           // preventDefault keeps focus on the input so onBlur doesn't
           // close the list before an item's onClick can fire.
@@ -106,7 +119,7 @@ export function QnameInput({
           )}
         >
           {matches.map((m, i) => (
-            <li key={`${m.qualified_name}-${i}`} role="option" aria-selected={i === active}>
+            <li id={optionId(i)} key={`${m.qualified_name}-${i}`} role="option" aria-selected={i === active}>
               <button
                 type="button"
                 onClick={() => select(m.qualified_name)}
