@@ -171,6 +171,21 @@ def test_status_returns_full_posture() -> None:
     assert "ui_enabled" in flag_names
 
 
+def test_status_serves_mandated_feature_weights() -> None:
+    """The five Phase-4 ranking weights are served verbatim so the UI
+    never has to hardcode them."""
+    app = _build_app()
+    with TestClient(app) as client:
+        body = client.get("/status").json()
+    assert body["feature_weights"] == {
+        "semantic": 0.35,
+        "graph": 0.25,
+        "recency": 0.20,
+        "importance": 0.15,
+        "feedback": 0.05,
+    }
+
+
 def test_status_embeddings_enabled_false_when_no_key(monkeypatch) -> None:
     """embeddings_enabled=False when OPENAI_API_KEY is absent."""
     get_settings.cache_clear()

@@ -80,7 +80,11 @@ export default function ToolRunnerPage() {
             <Badge variant="muted">{current.request_schema}</Badge>
             <span>schema · canonical-JSON output · request_id pinned per call</span>
           </div>
-          <ToolRunner tool={current.name} schemaName={current.request_schema} />
+          <ToolRunner
+            tool={current.name}
+            schemaName={current.request_schema}
+            schema={current.schema}
+          />
         </div>
       )}
     </div>

@@ -57,8 +57,9 @@ export function QueryBox({ defaultValue, onSubmit, pending, className }: QueryBo
       className={`grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 ${className ?? ""}`}
     >
       <div className="space-y-3">
-        <label className="block text-xs muted">query</label>
+        <label htmlFor="query-text" className="block text-xs muted">query</label>
         <Textarea
+          id="query-text"
           required
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -68,12 +69,13 @@ export function QueryBox({ defaultValue, onSubmit, pending, className }: QueryBo
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
-            <label className="block text-xs muted mb-1">repo_id</label>
-            <RepoSelect value={repoId} onChange={setRepoId} />
+            <label htmlFor="query-repo" className="block text-xs muted mb-1">repo_id</label>
+            <RepoSelect id="query-repo" value={repoId} onChange={setRepoId} />
           </div>
           <div>
-            <label className="block text-xs muted mb-1">top_k</label>
+            <label htmlFor="query-top-k" className="block text-xs muted mb-1">top_k</label>
             <Input
+              id="query-top-k"
               type="number"
               min={1}
               max={50}
@@ -82,8 +84,9 @@ export function QueryBox({ defaultValue, onSubmit, pending, className }: QueryBo
             />
           </div>
           <div>
-            <label className="block text-xs muted mb-1">seed unit_ids</label>
+            <label htmlFor="query-seeds" className="block text-xs muted mb-1">seed unit_ids</label>
             <Input
+              id="query-seeds"
               value={seedRaw}
               onChange={(e) => setSeedRaw(e.target.value)}
               placeholder="optional, comma or newline separated"

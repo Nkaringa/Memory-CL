@@ -57,6 +57,28 @@ def test_list_tools_returns_registered_names() -> None:
     body = resp.json()
     assert [t["name"] for t in body["tools"]] == ["echo"]
     assert body["tools"][0]["request_schema"] == "_EchoRequest"
+    # Full JSON Schema is exposed under "schema" alongside the class name.
+    schema = body["tools"][0]["schema"]
+    assert set(schema["properties"]) == {"msg"}
+    assert schema["required"] == ["msg"]
+
+
+def test_list_tools_exposes_json_schema_for_default_registry() -> None:
+    from apps.mcp.registry import build_default_registry
+
+    app = _make_app(registry=build_default_registry())
+    with TestClient(app) as client:
+        resp = client.get("/mcp/tools")
+    assert resp.status_code == 200
+    by_name = {t["name"]: t for t in resp.json()["tools"]}
+
+    qg = by_name["query_graph"]
+    assert qg["request_schema"] == "QueryGraphRequest"  # compat string kept
+    schema = qg["schema"]
+    assert {"node", "repo_id", "depth"} <= set(schema["properties"])
+    assert set(schema["required"]) == {"node", "repo_id"}
+    # Optional field defaults survive the round-trip.
+    assert schema["properties"]["depth"]["default"] == 1
 
 
 # ---- /mcp/tools/{tool} success path --------------------------------------

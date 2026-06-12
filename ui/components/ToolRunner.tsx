@@ -8,15 +8,66 @@ import { Badge } from "@/components/ui/badge";
 import { JsonView } from "@/components/ui/json-view";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fmtMs, truncHash } from "@/lib/utils";
-import type { McpToolResponse } from "@/lib/types";
+import type { McpToolResponse, ToolJsonSchema, ToolSchemaProperty } from "@/lib/types";
 import { getMemoryClient } from "@/lib/api";
 import { useRepos } from "@/components/RepoSelect";
 
 interface ToolRunnerProps {
   tool: string;
   schemaName: string;
+  /** Request JSON Schema from /mcp/tools — renders field hints when present. */
+  schema?: ToolJsonSchema;
   /** Optional starting payload — typically the example for that tool. */
   initialPayload?: Record<string, unknown>;
+}
+
+/** Human-readable type for a schema property, unwrapping pydantic's
+ *  anyOf encoding of optionals (`str | None` → "string | null"). */
+function propType(prop: ToolSchemaProperty): string {
+  if (typeof prop.type === "string") return prop.type;
+  if (Array.isArray(prop.anyOf)) {
+    return prop.anyOf
+      .map((v) => (typeof v.type === "string" ? v.type : "any"))
+      .join(" | ");
+  }
+  return "any";
+}
+
+/** Compact per-field hints — names, types, required markers, defaults,
+ *  descriptions. Deliberately NOT a generated form: the textarea below
+ *  stays the single source of truth for the payload. */
+function SchemaHints({ schema }: { schema: ToolJsonSchema }) {
+  const props = schema.properties ?? {};
+  const entries = Object.entries(props);
+  if (entries.length === 0) return null;
+  const required = new Set(schema.required ?? []);
+  return (
+    <div className="rounded-md border border-border bg-bg/30 p-3">
+      <div className="text-xs muted mb-2">
+        fields <span className="text-accent">*</span>
+        <span className="muted"> = required</span>
+      </div>
+      <ul className="space-y-1">
+        {entries.map(([name, prop]) => (
+          <li key={name} className="flex flex-wrap items-baseline gap-x-2 text-xs">
+            <span className="font-mono text-fg">
+              {name}
+              {required.has(name) && <span className="text-accent">*</span>}
+            </span>
+            <span className="font-mono muted">{propType(prop)}</span>
+            {prop.default !== undefined && (
+              <span className="font-mono muted">
+                = {JSON.stringify(prop.default)}
+              </span>
+            )}
+            {typeof prop.description === "string" && (
+              <span className="muted">— {prop.description}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function buildTemplates(repoId: string): Record<string, Record<string, unknown>> {
@@ -47,7 +98,7 @@ function buildTemplates(repoId: string): Record<string, Record<string, unknown>>
   };
 }
 
-export function ToolRunner({ tool, schemaName, initialPayload }: ToolRunnerProps) {
+export function ToolRunner({ tool, schemaName, schema, initialPayload }: ToolRunnerProps) {
   const { data: reposData } = useRepos();
   const firstRepoId = reposData?.repos[0]?.repo_id ?? "<repo-id>";
 
@@ -118,6 +169,8 @@ export function ToolRunner({ tool, schemaName, initialPayload }: ToolRunnerProps
       </CardHeader>
 
       <CardContent className="space-y-3">
+        {schema && <SchemaHints schema={schema} />}
+
         <div>
           <div className="text-xs muted mb-1">request payload (JSON)</div>
           <textarea

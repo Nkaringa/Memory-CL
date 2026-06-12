@@ -40,6 +40,14 @@ export interface BootStageView {
   error: string;
 }
 
+export interface FeatureWeightsView {
+  semantic: number;
+  graph: number;
+  recency: number;
+  importance: number;
+  feedback: number;
+}
+
 export interface StatusResponse {
   service: string;
   environment: string;
@@ -52,6 +60,9 @@ export interface StatusResponse {
   mcp_tool_count: number;
   schema_version: string;
   embeddings_enabled?: boolean;
+  /** Served by newer backends; older ones omit it (UI falls back to
+   *  the pinned Phase-4 constants). */
+  feature_weights?: FeatureWeightsView;
 }
 
 // ---- Retrieval ------------------------------------------------------------
@@ -137,9 +148,31 @@ export interface IngestResponse {
 }
 
 // ---- MCP ------------------------------------------------------------------
+
+/** One property inside a tool's JSON Schema (pydantic model_json_schema). */
+export interface ToolSchemaProperty {
+  type?: string;
+  description?: string;
+  default?: unknown;
+  /** pydantic emits `str | None` etc. as anyOf variants. */
+  anyOf?: Array<{ type?: string; [key: string]: unknown }>;
+  [key: string]: unknown;
+}
+
+/** JSON Schema for a tool's request model, served under `schema`. */
+export interface ToolJsonSchema {
+  title?: string;
+  type?: string;
+  properties?: Record<string, ToolSchemaProperty>;
+  required?: string[];
+  [key: string]: unknown;
+}
+
 export interface McpToolEntry {
   name: string;
   request_schema: string;
+  /** Full request JSON Schema; optional so older backends still parse. */
+  schema?: ToolJsonSchema;
 }
 
 export interface McpToolList {

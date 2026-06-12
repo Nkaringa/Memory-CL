@@ -1,22 +1,25 @@
 "use client";
 
 import { useMemo, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Sparkles, Database, GitGraph, Search, Activity } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tooltip } from "@/components/ui/tooltip";
 import { fmtScore } from "@/lib/utils";
-import type { ContextEntry, RetrieveResponse } from "@/lib/types";
+import { getMemoryClient } from "@/lib/api";
+import type { ContextEntry, FeatureWeightsView, RetrieveResponse } from "@/lib/types";
 
-/** Mandated Phase-4 weights — pinned client-side so the explanation is
- *  verifiable without a round-trip. */
-export const FEATURE_WEIGHTS = {
+/** Mandated Phase-4 weights — FALLBACK only. The live values are served
+ *  by /status (`feature_weights`); these constants cover older backends
+ *  that don't expose them yet. */
+export const FEATURE_WEIGHTS: FeatureWeightsView = {
   semantic: 0.35,
   graph: 0.25,
   recency: 0.2,
   importance: 0.15,
   feedback: 0.05,
-} as const;
+};
 
 interface ExplainPanelProps {
   result: RetrieveResponse;
@@ -43,6 +46,14 @@ const CHANNEL_META: Record<string, {
  *    4. Visual ranking-formula breakdown — bars per feature
  */
 export function ExplainPanel({ result, entry, className }: ExplainPanelProps) {
+  // Same key as the dashboard's status query → served from the shared
+  // react-query cache; no extra round-trip in the common case.
+  const status = useQuery({
+    queryKey: ["status"],
+    queryFn: () => getMemoryClient().status(),
+  });
+  const weights = status.data?.feature_weights ?? FEATURE_WEIGHTS;
+
   const channels = useMemo(
     () => ((entry.data?.channels as string[] | undefined) ?? []).filter(Boolean),
     [entry.data?.channels],
@@ -56,41 +67,43 @@ export function ExplainPanel({ result, entry, className }: ExplainPanelProps) {
       {
         key: "semantic_similarity",
         label: "Semantic similarity",
-        weight: FEATURE_WEIGHTS.semantic,
+        weight: weights.semantic,
         applies: channels.includes("vector"),
         hint: "Cosine of the query embedding against the unit's vector",
       },
       {
         key: "graph_proximity",
         label: "Graph proximity",
-        weight: FEATURE_WEIGHTS.graph,
+        weight: weights.graph,
         applies: channels.includes("graph"),
         hint: "1 − (depth / max_depth) — closer to seed scores higher",
       },
       {
         key: "recency",
         label: "Recency",
-        weight: FEATURE_WEIGHTS.recency,
+        weight: weights.recency,
         applies: channels.includes("metadata"),
         hint: "Exponential decay on the unit's updated_at",
       },
       {
         key: "importance",
         label: "Importance",
-        weight: FEATURE_WEIGHTS.importance,
+        weight: weights.importance,
         applies: true,
         hint: "Saturating sqrt of incoming-edge count",
       },
       {
         key: "user_feedback",
         label: "User feedback",
-        weight: FEATURE_WEIGHTS.feedback,
+        weight: weights.feedback,
         applies: false,
         hint: "Reserved — Phase-6 collects, Phase-12+ wires it in",
       },
     ],
-    [channels],
+    [channels, weights],
   );
+
+  const maxWeight = Math.max(...features.map((f) => f.weight), 1e-9);
 
   const summary = buildSummary({
     score: entry.score,
@@ -146,12 +159,14 @@ export function ExplainPanel({ result, entry, className }: ExplainPanelProps) {
           <div className="flex items-center justify-between">
             <div className="text-xs muted">Ranking formula</div>
             <div className="text-[10px] muted font-mono">
-              0.35·sem + 0.25·graph + 0.20·rec + 0.15·imp + 0.05·feedback
+              {weights.semantic.toFixed(2)}·sem + {weights.graph.toFixed(2)}·graph
+              {" + "}{weights.recency.toFixed(2)}·rec + {weights.importance.toFixed(2)}·imp
+              {" + "}{weights.feedback.toFixed(2)}·feedback
             </div>
           </div>
           <ul className="space-y-1.5">
             {features.map(({ key, ...rest }) => (
-              <FeatureRow key={key} {...rest} />
+              <FeatureRow key={key} maxWeight={maxWeight} {...rest} />
             ))}
           </ul>
         </div>
@@ -161,15 +176,16 @@ export function ExplainPanel({ result, entry, className }: ExplainPanelProps) {
 }
 
 function FeatureRow({
-  label, weight, applies, hint,
+  label, weight, applies, hint, maxWeight,
 }: {
   label: string;
   weight: number;
   applies: boolean;
   hint: string;
+  maxWeight: number;
 }) {
-  // Bar width as a percentage of the largest weight (0.35 = 100%).
-  const widthPct = (weight / 0.35) * 100;
+  // Bar width as a percentage of the largest weight (largest = 100%).
+  const widthPct = (weight / maxWeight) * 100;
   return (
     <li className="grid grid-cols-[140px_1fr_56px_72px] items-center gap-3 text-xs">
       <Tooltip content={hint}>

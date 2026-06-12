@@ -34,6 +34,15 @@ class ToolsListEntry(BaseModel):
     request_schema: str = Field(
         description="Pydantic class name of the tool's request schema",
     )
+    # Named `json_schema` internally to avoid shadowing BaseModel.schema;
+    # serialized as `"schema"` on the wire (FastAPI renders by alias).
+    json_schema: dict[str, Any] = Field(
+        serialization_alias="schema",
+        description=(
+            "Full JSON Schema of the request model "
+            "(pydantic v2 model_json_schema output)"
+        ),
+    )
 
 
 class ToolsListResponse(BaseModel):
@@ -62,7 +71,11 @@ async def list_tools(
 ) -> ToolsListResponse:
     return ToolsListResponse(
         tools=[
-            ToolsListEntry(name=t.name, request_schema=t.request_schema.__name__)
+            ToolsListEntry(
+                name=t.name,
+                request_schema=t.request_schema.__name__,
+                json_schema=t.request_schema.model_json_schema(),
+            )
             for t in registry.all()
         ]
     )
