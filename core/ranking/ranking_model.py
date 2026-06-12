@@ -66,6 +66,11 @@ class CandidateProvenance:
     file_path: str | None
     qualified_name: str | None
     kind: str | None
+    # Best raw_score among METADATA hits for this unit (0.0 when the
+    # unit never surfaced through the metadata channel). A lexical
+    # exact-ish match is semantic evidence — without this, metadata-only
+    # candidates ranked as exactly 0.0.
+    metadata_score: float = 0.0
 
 
 class RankingModel:
@@ -155,6 +160,7 @@ class RankingModel:
                 {
                     "cosine": None,
                     "graph_depth": None,
+                    "metadata_score": 0.0,
                     "channels": set(),
                     "file_path": c.file_path,
                     "qualified_name": c.qualified_name,
@@ -165,13 +171,16 @@ class RankingModel:
             if c.channel == RetrievalChannel.VECTOR and slot["cosine"] is None:
                 slot["cosine"] = c.raw_score
             if c.channel == RetrievalChannel.GRAPH:
-                # raw_score is graph proximity; recover depth as
-                # `int(round((1 - raw)*max_depth))` — kept symbolic via
-                # an explicit `extra["depth"]` if the retriever passed it.
+                # raw_score is graph proximity (1/(1+depth)); depth is
+                # carried explicitly via `extra["depth"]` by the retriever.
                 depth = c.extra.get("depth")
                 if isinstance(depth, int):
                     if slot["graph_depth"] is None or depth < slot["graph_depth"]:  # type: ignore[operator]
                         slot["graph_depth"] = depth
+            if c.channel == RetrievalChannel.METADATA:
+                # Best metadata evidence wins when a unit matched several
+                # metadata queries.
+                slot["metadata_score"] = max(slot["metadata_score"], c.raw_score)  # type: ignore[call-overload]
             # Prefer richer provenance from any channel that filled in details.
             for key in ("file_path", "qualified_name", "kind"):
                 if slot[key] is None:
@@ -188,6 +197,7 @@ class RankingModel:
                 file_path=slot["file_path"],  # type: ignore[arg-type]
                 qualified_name=slot["qualified_name"],  # type: ignore[arg-type]
                 kind=slot["kind"],  # type: ignore[arg-type]
+                metadata_score=slot["metadata_score"],  # type: ignore[arg-type]
             )
         return out
 
@@ -213,9 +223,14 @@ def _default_feature_provider(
         graph_proximity_from_depth,
     )
 
-    semantic = cosine_to_similarity(prov.cosine) if prov.cosine is not None else 0.0
+    cosine_sim = cosine_to_similarity(prov.cosine) if prov.cosine is not None else 0.0
+    # Max-fusion: a metadata hit is a lexical exact-ish match on the
+    # symbol/docstring — that IS semantic evidence. Taking the stronger
+    # of the two signals keeps the mandated five-feature formula intact
+    # while ensuring metadata-only candidates score above 0.
+    semantic = max(cosine_sim, prov.metadata_score)
     graph = (
-        graph_proximity_from_depth(prov.graph_depth, max_depth=3)
+        graph_proximity_from_depth(prov.graph_depth)
         if prov.graph_depth is not None
         else 0.0
     )

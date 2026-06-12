@@ -43,10 +43,18 @@ def test_cosine_to_similarity_clips_to_unit_interval(inp: float, expected: float
 
 
 def test_graph_proximity_seeds_at_one_decays_monotone() -> None:
-    assert graph_proximity_from_depth(0, max_depth=3) == 1.0
-    assert graph_proximity_from_depth(1, max_depth=3) > graph_proximity_from_depth(2, max_depth=3)
-    assert graph_proximity_from_depth(3, max_depth=3) == 0.0
-    assert graph_proximity_from_depth(99, max_depth=3) == 0.0
+    """Documented contract (schemas/retrieval.py): proximity = 1/(1+depth).
+
+    The old `1 - depth/max_depth` taper zeroed the deepest band, so every
+    candidate at the requested depth scored exactly 0.0 — that was the bug.
+    """
+    assert graph_proximity_from_depth(0) == 1.0
+    assert graph_proximity_from_depth(1) == pytest.approx(0.5)
+    assert graph_proximity_from_depth(2) == pytest.approx(1 / 3)
+    assert graph_proximity_from_depth(3) == pytest.approx(0.25)
+    assert graph_proximity_from_depth(1) > graph_proximity_from_depth(2)
+    # Deep hits decay but never hard-zero.
+    assert 0.0 < graph_proximity_from_depth(99) < 0.02
 
 
 def test_recency_decay_is_exponential() -> None:
@@ -172,6 +180,67 @@ def test_default_feature_provider_uses_only_channel_observables() -> None:
     assert feats.recency == 0.0
     assert feats.importance == 0.0
     assert feats.user_feedback == 0.0
+
+
+# ---- METADATA channel scoring (Defect B) -----------------------------------
+def test_metadata_only_candidate_scores_above_zero() -> None:
+    """A metadata-only hit must not rank as exactly 0.0."""
+    cand = RetrievalCandidate(
+        unit_id="u1", channel=RetrievalChannel.METADATA, raw_score=0.5,
+        qualified_name="pkg.m.f",
+    )
+    [r] = RankingModel().rank([cand])
+    assert r.final_score > 0.0
+    # The lexical match feeds the semantic feature.
+    assert r.breakdown.semantic_similarity == pytest.approx(0.5)
+
+
+def test_exact_metadata_hit_outranks_noise_vector_hit() -> None:
+    cands = [
+        RetrievalCandidate(
+            unit_id="meta-hit", channel=RetrievalChannel.METADATA,
+            raw_score=0.5, qualified_name="pkg.auth.login",
+        ),
+        RetrievalCandidate(
+            unit_id="noise-hit", channel=RetrievalChannel.VECTOR,
+            raw_score=0.02,
+        ),
+    ]
+    ranked = RankingModel().rank(cands)
+    assert [r.unit_id for r in ranked] == ["meta-hit", "noise-hit"]
+    assert ranked[0].final_score > ranked[1].final_score
+
+
+def test_semantic_takes_max_of_cosine_and_metadata_score() -> None:
+    """Max-fusion: the stronger of cosine / metadata evidence wins."""
+    cands = [
+        RetrievalCandidate(unit_id="u1", channel=RetrievalChannel.VECTOR,
+                           raw_score=0.9),
+        RetrievalCandidate(unit_id="u1", channel=RetrievalChannel.METADATA,
+                           raw_score=0.5),
+    ]
+    [r] = RankingModel().rank(cands)
+    assert r.breakdown.semantic_similarity == pytest.approx(0.9)
+
+    cands = [
+        RetrievalCandidate(unit_id="u2", channel=RetrievalChannel.VECTOR,
+                           raw_score=0.1),
+        RetrievalCandidate(unit_id="u2", channel=RetrievalChannel.METADATA,
+                           raw_score=0.5),
+    ]
+    [r] = RankingModel().rank(cands)
+    assert r.breakdown.semantic_similarity == pytest.approx(0.5)
+
+
+def test_metadata_score_takes_max_when_multiple_metadata_hits() -> None:
+    cands = [
+        RetrievalCandidate(unit_id="u1", channel=RetrievalChannel.METADATA,
+                           raw_score=0.3),
+        RetrievalCandidate(unit_id="u1", channel=RetrievalChannel.METADATA,
+                           raw_score=0.5),
+    ]
+    [r] = RankingModel().rank(cands)
+    assert r.breakdown.semantic_similarity == pytest.approx(0.5)
 
 
 # ---- Top-k + deterministic re-runs ----------------------------------------

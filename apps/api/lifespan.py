@@ -14,6 +14,8 @@ from core import (
     shutdown_observability,
     start_observability,
 )
+from core.config import Settings
+from core.embeddings import Embedder, OpenAIEmbedder
 from storage import (
     Neo4jClient,
     Neo4jGraphRepository,
@@ -25,6 +27,41 @@ from storage import (
 )
 
 _log = get_logger(__name__)
+
+
+def _build_query_embedder(settings: Settings) -> Embedder | None:
+    """Query-side embedder matching the document-side (ingest) embedder.
+
+    Phase-3 ingestion embeds documents with `OpenAIEmbedder` whenever
+    `embeddings_enabled` — query vectors must come from the SAME model
+    or cosine scores against the stored vectors are noise. Returns None
+    when embeddings are disabled so `AppState.with_default_embedder`
+    falls back to the deterministic embedder.
+    """
+    if not settings.embeddings_enabled:
+        return None
+    assert settings.openai_api_key is not None  # embeddings_enabled guarantees it
+    return OpenAIEmbedder(
+        api_key=settings.openai_api_key.get_secret_value(),
+        model=settings.embedding_model,
+        # 1536-dim — matches the ingest-side collections (_DEFAULT_VECTOR_SIZE).
+        dimension=1536,
+    )
+
+
+async def _close_embedder(embedder: object) -> None:
+    """Release the embedder's HTTP client at shutdown, if it has one.
+
+    Mirrors the client-disconnect teardown: failures are logged, never
+    raised — shutdown must always complete.
+    """
+    aclose = getattr(embedder, "aclose", None)
+    if aclose is None:
+        return
+    try:
+        await aclose()
+    except Exception as exc:
+        _log.warning("embedder_close_error", error=str(exc))
 
 
 def _build_state() -> AppState:
@@ -47,6 +84,7 @@ def _build_state() -> AppState:
         units_repo=PostgresIngestionRepository(engine_proxy(pg)),
         graph_repo=Neo4jGraphRepository(driver_proxy(nj)),
         vector_repo=QdrantVectorRepository(client_proxy(qd)),
+        embedder=_build_query_embedder(settings),
     )
 
 
@@ -195,5 +233,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for client, result in zip(clients, results, strict=True):
             if isinstance(result, BaseException):
                 _log.warning("disconnect_error", backend=client.name, error=str(result))
+        # OpenAIEmbedder holds an httpx.AsyncClient — release it like the
+        # storage clients above (no-op for the deterministic fallback).
+        await _close_embedder(state.embedder)
         shutdown_observability()
         _log.info("shutdown_complete")

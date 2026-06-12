@@ -30,9 +30,10 @@ class AppState:
     units_repo: PostgresIngestionRepository
     graph_repo: Neo4jGraphRepository
     vector_repo: QdrantVectorRepository
-    # Phase 4: retrieval-side dependencies. The default embedder is the
-    # deterministic Phase-3 embedder; Phase 5 will swap in a model-backed
-    # one without touching this contract.
+    # Phase 4: retrieval-side dependencies. The query embedder MUST live
+    # in the same vector space as the document embedder used at ingest —
+    # lifespan wires an OpenAIEmbedder when embeddings are enabled and
+    # the deterministic fallback otherwise.
     embedder: Embedder
 
     @classmethod
@@ -47,7 +48,14 @@ class AppState:
         graph_repo: Neo4jGraphRepository,
         vector_repo: QdrantVectorRepository,
         embedding_dimension: int = 1536,
+        embedder: Embedder | None = None,
     ) -> AppState:
+        """Build an AppState, defaulting the embedder when none is given.
+
+        Pass `embedder` to wire a model-backed query embedder (the
+        production path when embeddings are enabled); leave it None for
+        the deterministic fallback (tests, embeddings-disabled deploys).
+        """
         return cls(
             postgres=postgres,
             qdrant=qdrant,
@@ -56,5 +64,9 @@ class AppState:
             units_repo=units_repo,
             graph_repo=graph_repo,
             vector_repo=vector_repo,
-            embedder=DeterministicEmbedder(dimension=embedding_dimension),
+            embedder=(
+                embedder
+                if embedder is not None
+                else DeterministicEmbedder(dimension=embedding_dimension)
+            ),
         )
