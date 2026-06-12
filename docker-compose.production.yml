@@ -174,6 +174,13 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.11.0
     container_name: memory-cl-qdrant-prod
+    # RocksDB opens many segment files per collection; the container
+    # default nofile limit exhausts at ~4 collections ("Too many open
+    # files" on create_collection). Qdrant ops guidance: raise it.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     volumes:
       - qdrant-prod-data:/qdrant/storage
     # NOTE: Qdrant ships a busybox-based slim image that lacks `curl`,
