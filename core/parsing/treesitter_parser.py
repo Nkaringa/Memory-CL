@@ -53,6 +53,17 @@ def _text(node: Node) -> str:
     return (node.text or b"").decode("utf-8")
 
 
+def _count_error_nodes(root: Node) -> int:
+    count = 0
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == "ERROR" or node.is_missing:
+            count += 1
+        stack.extend(node.children)
+    return count
+
+
 def _slice_source(source: str, line_start: int, line_end: int) -> str:
     """Return raw source for [line_start, line_end] inclusive (1-indexed)."""
     lines = source.splitlines(keepends=True)
@@ -174,6 +185,7 @@ class TreeSitterParser:
                     duration_ms=(time.perf_counter() - start) * 1000,
                     file_path=file_path,
                     level="warning",
+                    error_nodes=_count_error_nodes(root),
                 )
 
             module_qname = module_qname_from_path(file_path)
@@ -245,6 +257,8 @@ def _is_async(node: Node) -> bool:
 
 
 def _signature(name: str, node: Node) -> str:
+    type_params = node.child_by_field_name("type_parameters")
+    tp_text = _text(type_params) if type_params is not None else ""
     params = node.child_by_field_name("parameters")
     if params is not None:
         params_text = _text(params)
@@ -255,7 +269,7 @@ def _signature(name: str, node: Node) -> str:
     ret = node.child_by_field_name("return_type")
     ret_text = _text(ret) if ret is not None else ""
     prefix = "async " if _is_async(node) else ""
-    return f"{prefix}{name}{params_text}{ret_text}"
+    return f"{prefix}{name}{tp_text}{params_text}{ret_text}"
 
 
 def _member_chain(node: Node | None) -> str | None:

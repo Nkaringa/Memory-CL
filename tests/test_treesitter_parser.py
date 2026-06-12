@@ -299,6 +299,15 @@ def test_new_expression_recorded_as_call() -> None:
     assert "pkg.Worker" in calls
 
 
+def test_typescript_generic_signature() -> None:
+    units = _parse(
+        "export function identity<T>(x: T): T { return x; }\n",
+        file_path="src/gen.ts",
+    )
+    by_qname = {u.qualified_name: u for u in units}
+    assert by_qname["src.gen.identity"].signature == "identity<T>(x: T): T"
+
+
 def test_degenerate_import_specifiers_skipped() -> None:
     units = _parse(
         """
