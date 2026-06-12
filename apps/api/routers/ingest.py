@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.dependencies import AppStateDep
 from apps.api.state import AppState
+from apps.mcp.auth import ApiKeyDep
 from core import get_settings
 from core.config import Settings
 from core.embeddings import ChunkingStrategy, EmbeddingPipeline, OpenAIEmbedder
@@ -96,7 +97,11 @@ def _build_embedding_components(
     response_model=IngestResponse,
     status_code=status.HTTP_200_OK,
 )
-async def ingest_repo(req: IngestRequest, state: AppStateDep) -> IngestResponse:
+async def ingest_repo(
+    req: IngestRequest,
+    state: AppStateDep,
+    api_key: ApiKeyDep,  # auth enforced here, same dependency as /mcp/tools
+) -> IngestResponse:
     """Trigger ingestion of `repo_path` under tenant `repo_id` at `commit_sha`.
 
     Phase 2 contract: idempotent — re-running the same (repo_id, commit_sha)
@@ -154,7 +159,11 @@ async def ingest_repo(req: IngestRequest, state: AppStateDep) -> IngestResponse:
     response_model=ReembedResponse,
     status_code=status.HTTP_200_OK,
 )
-async def reembed_repo(req: ReembedRequest, state: AppStateDep) -> ReembedResponse:
+async def reembed_repo(
+    req: ReembedRequest,
+    state: AppStateDep,
+    api_key: ApiKeyDep,  # auth enforced here — reembed spends provider money
+) -> ReembedResponse:
     """Backfill real vectors for every unit already ingested for `repo_id`.
 
     Use after configuring OPENAI_API_KEY on a deployment that ingested

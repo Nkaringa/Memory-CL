@@ -11,7 +11,9 @@ Three layers of access control:
 ## MCP API key
 
 `apps/mcp/auth.py::require_mcp_api_key` is the FastAPI dependency
-that gates `POST /mcp/tools/{name}`.
+that gates the mutation surface: `POST /mcp/tools/{name}`,
+`POST /ingest`, and `POST /ingest/reembed` (reembed spends
+embedding-provider money, so it is never left open).
 
 Behavior:
 
@@ -43,7 +45,8 @@ new AsyncMemoryClient({ apiKey: process.env.MEMORY_CL_API_KEY })
 AsyncMemoryClient(api_key=os.environ["MEMORY_CL_API_KEY"])
 ```
 
-If you need org-wide auth on every endpoint (not just MCP), terminate
+If you need org-wide auth on every endpoint (not just the MCP and
+ingest mutation endpoints above), terminate
 TLS + auth at a reverse proxy (nginx, Envoy, Cloudflare) in front of
 the FastAPI process.
 

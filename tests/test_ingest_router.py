@@ -344,6 +344,150 @@ async def test_reembed_concurrent_same_repo_returns_409(
         assert third.status_code == 200
 
 
+# ---- auth (mirrors tests/test_mcp_router.py) -------------------------------
+# The ingest endpoints are mutations (reembed even spends provider money),
+# so they sit behind the same ApiKeyDep as POST /mcp/tools/{name}:
+# key configured → required; key unset → dev mode, keyless allowed.
+
+
+def test_ingest_rejects_request_without_api_key_when_key_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MCP_API_KEY", "secret-123")
+    state = _make_state()
+    app = _build_app(state)
+    repo_path = _make_repo(tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/ingest",
+            json={
+                "repo_id": "tenant-1",
+                "repo_path": str(repo_path),
+                "commit_sha": "abc123",
+            },
+        )
+
+    assert resp.status_code == 401
+    # Auth short-circuits before any pipeline work.
+    state.vector_repo.ensure_collection.assert_not_awaited()
+
+
+def test_ingest_accepts_correct_api_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MCP_API_KEY", "secret-123")
+    state = _make_state()
+    app = _build_app(state)
+    repo_path = _make_repo(tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/ingest",
+            json={
+                "repo_id": "tenant-1",
+                "repo_path": str(repo_path),
+                "commit_sha": "abc123",
+            },
+            headers={"X-API-Key": "secret-123"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["repo_id"] == "tenant-1"
+
+
+def test_ingest_allows_keyless_request_in_dev_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dev mode: mcp_api_key not set → keyless ingest allowed."""
+    monkeypatch.delenv("MCP_API_KEY", raising=False)
+    state = _make_state()
+    app = _build_app(state)
+    repo_path = _make_repo(tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/ingest",
+            json={
+                "repo_id": "tenant-1",
+                "repo_path": str(repo_path),
+                "commit_sha": "abc123",
+            },
+        )
+
+    assert resp.status_code == 200
+
+
+def test_reembed_rejects_request_without_api_key_when_key_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MCP_API_KEY", "secret-123")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
+    state = _make_state()
+    app = _build_app(state)
+
+    with TestClient(app) as client:
+        resp = client.post("/ingest/reembed", json={"repo_id": "tenant-1"})
+
+    assert resp.status_code == 401
+    # Auth short-circuits before any provider spend.
+    cast(AsyncMock, state.units_repo.list_units_for_repo).assert_not_awaited()
+
+
+def test_reembed_accepts_correct_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MCP_API_KEY", "secret-123")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
+    fake_pipe = _RecordingEmbeddingPipeline()
+    fake_embedder = AsyncMock()
+    monkeypatch.setattr(
+        ingest_router,
+        "_build_embedding_components",
+        lambda state, settings: (fake_pipe, fake_embedder),
+    )
+    state = _make_state()
+    state.units_repo.list_units_for_repo = AsyncMock(  # type: ignore[method-assign]
+        return_value=[object()]
+    )
+    app = _build_app(state)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/ingest/reembed",
+            json={"repo_id": "tenant-1"},
+            headers={"X-API-Key": "secret-123"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["units_embedded"] == 1
+
+
+def test_reembed_allows_keyless_request_in_dev_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dev mode: mcp_api_key not set → keyless reembed allowed."""
+    monkeypatch.delenv("MCP_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
+    fake_pipe = _RecordingEmbeddingPipeline()
+    fake_embedder = AsyncMock()
+    monkeypatch.setattr(
+        ingest_router,
+        "_build_embedding_components",
+        lambda state, settings: (fake_pipe, fake_embedder),
+    )
+    state = _make_state()
+    state.units_repo.list_units_for_repo = AsyncMock(  # type: ignore[method-assign]
+        return_value=[object()]
+    )
+    app = _build_app(state)
+
+    with TestClient(app) as client:
+        resp = client.post("/ingest/reembed", json={"repo_id": "tenant-1"})
+
+    assert resp.status_code == 200
+
+
 @pytest.mark.asyncio
 async def test_ingest_endpoint_propagates_failed_files(tmp_path: Path) -> None:
     (tmp_path / "good.py").write_text("def f(): pass\n")
