@@ -30,6 +30,9 @@ core/ingestion/pipeline.py · IngestionPipeline.run(ctx)
   │        .py          → PythonParser        (python_parser.py)
   │        .js .mjs .cjs .jsx → TreeSitterParser (treesitter_parser.py)
   │        .ts .tsx .mts .cts → TreeSitterParser
+  │        .cs .go .java .rs  → TreeSitterParser
+  │        .md .mdx .rst .txt → DocParser (doc_parser.py) — headings
+  │            become SECTION units, relative links → IMPORTS edges
   │        .d.ts / .d.mts / .d.cts — skipped (declaration files)
   │  for each file:
   │    parser.parse_file()  → list[IngestionUnit]

@@ -10,7 +10,13 @@ from core.ingestion.context import IngestionContext, IngestionMetrics
 from core.ingestion.graph_builder import _UNIT_TO_NODE, GraphBuilder
 from core.ingestion.logevent import emit_phase2_event
 from core.observability import get_tracer
-from core.parsing import FileWalker, PythonParser, SourceParser, TreeSitterParser
+from core.parsing import (
+    DocParser,
+    FileWalker,
+    PythonParser,
+    SourceParser,
+    TreeSitterParser,
+)
 from schemas import (
     FileRef,
     GraphEdge,
@@ -122,6 +128,8 @@ def _default_parsers() -> dict[Language, SourceParser]:
         Language.GO: TreeSitterParser(Language.GO),
         Language.JAVA: TreeSitterParser(Language.JAVA),
         Language.RUST: TreeSitterParser(Language.RUST),
+        Language.MARKDOWN: DocParser(Language.MARKDOWN),
+        Language.TEXT: DocParser(Language.TEXT),
     }
 
 

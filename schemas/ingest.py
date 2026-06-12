@@ -21,6 +21,7 @@ class UnitKind(StrEnum):
     FUNCTION = "fn"
     METHOD = "mth"
     CONSTANT = "const"
+    SECTION = "sec"  # markdown heading section (docs ingestion)
 
 
 class Language(StrEnum):
@@ -31,6 +32,9 @@ class Language(StrEnum):
     GO = "go"
     JAVA = "java"
     RUST = "rust"
+    # Documentation "languages" — parsed by DocParser, not tree-sitter.
+    MARKDOWN = "markdown"
+    TEXT = "text"
     # Reserved for later phases — adding values here is backward-compatible.
 
 

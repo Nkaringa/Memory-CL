@@ -28,6 +28,14 @@ _DEFAULT_IGNORES: tuple[str, ...] = (
     ".tox/",
     ".idea/",
     ".vscode/",
+    # Tooling/agent directories — these hold assistant configs, prompts and
+    # planning docs whose markdown must never ingest as project knowledge.
+    ".claude/",
+    ".codex/",
+    ".gemini/",
+    ".cursor/",
+    ".github/",
+    ".planning/",
 )
 
 
@@ -47,8 +55,9 @@ class WalkResult:
 class FileWalker:
     """Deterministic, gitignore-aware repo walker.
 
-    Walks Python, JS/TS, C#, Go, Java, and Rust sources. Adding more
-    languages later is a pure additive change to `LANGUAGE_EXTENSIONS`.
+    Walks Python, JS/TS, C#, Go, Java, and Rust sources plus
+    Markdown/text documentation. Adding more languages later is a pure
+    additive change to `LANGUAGE_EXTENSIONS`.
     """
 
     LANGUAGE_EXTENSIONS: tuple[tuple[str, Language], ...] = (
@@ -67,6 +76,11 @@ class FileWalker:
         (".go", Language.GO),
         (".java", Language.JAVA),
         (".rs", Language.RUST),
+        # Documentation files → DocParser (no tree-sitter grammar).
+        (".md", Language.MARKDOWN),
+        (".mdx", Language.MARKDOWN),
+        (".rst", Language.MARKDOWN),
+        (".txt", Language.TEXT),
     )
 
     # TypeScript declaration files carry types only, no logic. Their

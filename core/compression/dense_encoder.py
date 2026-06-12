@@ -20,6 +20,7 @@ _KIND_TO_T: dict[UnitKind, str] = {
     UnitKind.FUNCTION: "fn",
     UnitKind.METHOD: "mth",
     UnitKind.CONSTANT: "const",
+    UnitKind.SECTION: "sec",
 }
 
 

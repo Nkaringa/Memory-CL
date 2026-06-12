@@ -32,11 +32,13 @@ def repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_walker_returns_only_python_files(repo: Path) -> None:
+def test_walker_returns_only_supported_files(repo: Path) -> None:
     result = FileWalker().walk(repo, repo_id="r1")
     assert isinstance(result, WalkResult)
     paths = [f.path for f in result.files]
+    # README.md is walked since docs ingestion; data.json is not.
     assert paths == [
+        "README.md",
         "pkg/__init__.py",
         "pkg/_helpers.py",
         "pkg/service.py",
@@ -117,6 +119,39 @@ def test_walker_includes_go_test_files(tmp_path) -> None:
 
     paths = [f.path for f in FileWalker().walk(tmp_path, repo_id="r").files]
     assert paths == ["server.go", "server_test.go"]
+
+
+def test_walker_maps_doc_extensions(tmp_path) -> None:
+    (tmp_path / "README.md").write_text("# readme")
+    (tmp_path / "page.mdx").write_text("# mdx page")
+    (tmp_path / "manual.rst").write_text("Manual\n======")
+    (tmp_path / "notes.txt").write_text("plain notes")
+    (tmp_path / "data.json").write_text("{}")
+
+    result = FileWalker().walk(tmp_path, repo_id="r")
+    langs = {f.path: f.language for f in result.files}
+
+    assert langs == {
+        "README.md": Language.MARKDOWN,
+        "page.mdx": Language.MARKDOWN,
+        "manual.rst": Language.MARKDOWN,
+        "notes.txt": Language.TEXT,
+    }
+
+
+def test_walker_excludes_tooling_dot_directories(tmp_path) -> None:
+    # Assistant/tooling markdown must never ingest as project knowledge.
+    for d in (".claude", ".codex", ".gemini", ".cursor", ".github", ".planning",
+              ".vscode", ".idea"):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / "notes.md").write_text("# tooling doc")
+    (tmp_path / ".github" / "workflows").mkdir()
+    (tmp_path / ".github" / "workflows" / "ci.md").write_text("# nested")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "real.md").write_text("# real doc")
+
+    paths = [f.path for f in FileWalker().walk(tmp_path, repo_id="r").files]
+    assert paths == ["docs/real.md"]
 
 
 def test_walker_skips_declaration_files(tmp_path) -> None:

@@ -26,6 +26,7 @@ _UNIT_TO_NODE: dict[UnitKind, NodeKind] = {
     UnitKind.FUNCTION: NodeKind.FUNCTION,
     UnitKind.METHOD: NodeKind.METHOD,
     UnitKind.CONSTANT: NodeKind.CONSTANT,
+    UnitKind.SECTION: NodeKind.SECTION,
 }
 
 # qname -> (unit_id, kind). The pipeline builds this once per ingest
@@ -47,6 +48,7 @@ _SOURCE_SUFFIXES: tuple[str, ...] = (
     ".jsx", ".mjs", ".cjs", ".js",
     ".tsx", ".mts", ".cts", ".ts",
     ".cs", ".go", ".java", ".rs",
+    ".mdx", ".md", ".rst", ".txt",
 )
 
 _INDEX_COLLAPSE_SUFFIXES: frozenset[str | None] = frozenset({
@@ -282,7 +284,9 @@ class GraphBuilder:
         edges: list[GraphEdge],
     ) -> None:
         for u in units:
-            if u.kind != UnitKind.MODULE or not u.imports:
+            # Sections carry doc-link imports (docs ingestion) — same
+            # resolution rules, allowed by the Section-IMPORTS edge rule.
+            if u.kind not in (UnitKind.MODULE, UnitKind.SECTION) or not u.imports:
                 continue
             for imp in u.imports:
                 target_id = self._resolve_or_external(
@@ -294,6 +298,9 @@ class GraphBuilder:
                     repo_id=u.repo_id,
                     allowed_kinds={NodeKind.MODULE},
                 )
+                if target_id == u.unit_id:
+                    # A doc linking to itself — self-edges are illegal.
+                    continue
                 edges.append(
                     GraphEdge(
                         src_id=u.unit_id,

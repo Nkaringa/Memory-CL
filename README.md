@@ -25,7 +25,8 @@ For the longer mental model: **[docs/01_OVERVIEW](docs/01_OVERVIEW.md)**.
 
 ## Key capabilities
 
-- **Multi-language ingestion** — Python (`.py`), JavaScript (`.js .mjs .cjs .jsx`), and TypeScript (`.ts .tsx .mts .cts`); declaration files (`.d.ts` / `.d.mts` / `.d.cts`) are skipped
+- **Multi-language ingestion** — Python (`.py`), JavaScript (`.js .mjs .cjs .jsx`), TypeScript (`.ts .tsx .mts .cts`), C# (`.cs`), Go (`.go`), Java (`.java`), and Rust (`.rs`); declaration files (`.d.ts` / `.d.mts` / `.d.cts`) are skipped
+- **Docs ingestion** — Markdown (`.md .mdx .rst`) split into heading sections with relative links becoming graph edges, plus plain text (`.txt`); tooling dirs (`.claude/`, `.github/`, `.planning/`, …) are excluded by default
 - **Hybrid retrieval** — graph, vector, and metadata channels blended by a fixed-weight ranking formula
 - **Explainable results** — every ranked entry surfaces its score breakdown + pipeline trace
 - **Deterministic outputs** — pinned by snapshot + replay, byte-identical across runs

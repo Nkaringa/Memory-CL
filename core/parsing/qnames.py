@@ -8,6 +8,9 @@ SOURCE_SUFFIXES: tuple[str, ...] = (
     ".jsx", ".mjs", ".cjs", ".js",
     ".tsx", ".mts", ".cts", ".ts",
     ".cs", ".go", ".java", ".rs",
+    # Documentation files (docs ingestion). `docs/setup.md` -> `docs.setup`;
+    # no `index`/`README` collapse — doc qnames stay purely path-based.
+    ".mdx", ".md", ".rst", ".txt",
 )
 
 # Suffixes whose `index` basename collapses onto the parent directory.
