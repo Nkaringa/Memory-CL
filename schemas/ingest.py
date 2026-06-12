@@ -27,6 +27,10 @@ class Language(StrEnum):
     PYTHON = "python"
     JAVASCRIPT = "javascript"
     TYPESCRIPT = "typescript"
+    CSHARP = "csharp"
+    GO = "go"
+    JAVA = "java"
+    RUST = "rust"
     # Reserved for later phases — adding values here is backward-compatible.
 
 

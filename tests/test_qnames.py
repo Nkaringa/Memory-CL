@@ -42,5 +42,7 @@ def test_graph_builder_mirror_stays_in_sync() -> None:
         "pkg/mod.py", "pkg/__init__.py", "pkg/index.py",
         "src/app.js", "src/utils/index.ts", "src/components/Button.tsx",
         "lib/loader.cjs", "top.py", "index.js", "__init__.py",
+        "pkg/server/handler.go", "Assets/Scripts/Player.cs",
+        "src/main/java/App.java", "src/db/mod.rs", "mod.rs", "pkg/index.go",
     ):
         assert _module_qname(path) == module_qname_from_path(path), path

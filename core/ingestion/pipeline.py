@@ -38,6 +38,10 @@ def _default_parsers() -> dict[Language, SourceParser]:
         Language.PYTHON: PythonParser(),
         Language.JAVASCRIPT: TreeSitterParser(Language.JAVASCRIPT),
         Language.TYPESCRIPT: TreeSitterParser(Language.TYPESCRIPT),
+        Language.CSHARP: TreeSitterParser(Language.CSHARP),
+        Language.GO: TreeSitterParser(Language.GO),
+        Language.JAVA: TreeSitterParser(Language.JAVA),
+        Language.RUST: TreeSitterParser(Language.RUST),
     }
 
 
