@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core.ingestion import IngestionPipeline, make_context
-from schemas import GraphEdge, GraphNode, IngestionUnit
+from schemas import GraphEdge, GraphNode, IngestionUnit, stable_unit_id
 
 
 def _make_repo(tmp_path: Path) -> Path:
@@ -604,6 +604,312 @@ async def test_reingest_unchanged_without_embedder_keeps_placeholder_writes(
 
     assert _placeholder_point_ids(vector_repo2) == {u.unit_id for u in captured}
     assert result.metrics["vector_payloads_written"] == len(captured)
+
+
+# ---- Bug 1: forward cross-file edges / final edge pass ---------------------
+def _make_forward_repo(tmp_path: Path) -> Path:
+    """a_caller.py sorts BEFORE z_target.py but points INTO it.
+
+    With per-file edge writes, the CALLS/IMPORTS edges from a_caller were
+    sent to the graph store before z_target's nodes existed — the MATCH…
+    MERGE matched nothing and the edges were silently dropped (the
+    NK-Base forward-relative-import bug). The final edge pass fixes it.
+    """
+    (tmp_path / "a_caller.py").write_text(
+        "import z_target\n\n\ndef caller():\n    return z_target.target_fn()\n"
+    )
+    (tmp_path / "z_target.py").write_text("def target_fn():\n    return 1\n")
+    return tmp_path
+
+
+def _ordered_graph_repo(events: list[tuple[str, object]]) -> AsyncMock:
+    """Graph repo mock that appends every call to a shared event log."""
+    repo = AsyncMock()
+
+    async def rec_delete(repo_id, file_path):
+        events.append(("delete", file_path))
+        return 0
+
+    async def rec_nodes(nodes):
+        batch = list(nodes)
+        events.append(("nodes", [n.node_id for n in batch]))
+        return len(batch)
+
+    async def rec_edges(edges):
+        batch = list(edges)
+        events.append(("edges", [(e.src_id, e.kind.value, e.dst_id) for e in batch]))
+        return len(batch)
+
+    repo.delete_subgraph_for_file = AsyncMock(side_effect=rec_delete)
+    repo.upsert_nodes = AsyncMock(side_effect=rec_nodes)
+    repo.upsert_edges = AsyncMock(side_effect=rec_edges)
+    return repo
+
+
+@pytest.mark.asyncio
+async def test_forward_cross_file_edge_survives_first_ingest(tmp_path: Path) -> None:
+    repo_path = _make_forward_repo(tmp_path)
+    events: list[tuple[str, object]] = []
+    graph_repo = _ordered_graph_repo(events)
+
+    ctx = make_context(
+        repo_id="r1",
+        repo_path=repo_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=_fake_units_repo(),
+        graph_repo=graph_repo,
+        vector_repo=_fake_vector_repo(),
+    )
+    result = await IngestionPipeline().run(ctx)
+    assert result.failed_files == ()
+
+    # Every node upsert happens BEFORE the first edge upsert: edges are
+    # written once, run-wide, after all files' nodes exist.
+    kinds = [k for k, _ in events]
+    assert "edges" in kinds and "nodes" in kinds
+    first_edge_call = kinds.index("edges")
+    assert all(k != "nodes" for k in kinds[first_edge_call:]), (
+        "node upserts ran after the edge pass — edges must come last"
+    )
+    assert graph_repo.upsert_edges.await_count == 1
+
+    # The forward cross-file CALLS edge resolved to the REAL target unit
+    # and survived ingestion.
+    caller_id = stable_unit_id("r1", "a_caller.py", "a_caller.caller")
+    target_id = stable_unit_id("r1", "z_target.py", "z_target.target_fn")
+    all_edges = [e for k, batch in events if k == "edges" for e in batch]  # type: ignore[union-attr]
+    assert (caller_id, "CALLS", target_id) in all_edges
+
+    # The forward IMPORTS edge module->module resolved too.
+    caller_mod = stable_unit_id("r1", "a_caller.py", "a_caller")
+    target_mod = stable_unit_id("r1", "z_target.py", "z_target")
+    assert (caller_mod, "IMPORTS", target_mod) in all_edges
+
+
+@pytest.mark.asyncio
+async def test_reingest_wipe_rewrites_inbound_cross_file_edges(tmp_path: Path) -> None:
+    """Reconciliation DETACH-DELETEs z_target.py's subgraph, severing the
+    inbound CALLS edge from (unchanged) a_caller.py. The final run-wide
+    edge pass must restore it — and must run AFTER the wipe."""
+    repo_path = _make_forward_repo(tmp_path)
+    events: list[tuple[str, object]] = []
+    graph_repo = _ordered_graph_repo(events)
+
+    units_repo = _fake_units_repo()
+    # A ghost row in z_target.py triggers the whole-file wipe there.
+    units_repo.list_units_for_file = AsyncMock(
+        side_effect=lambda repo_id, fp: (
+            [AsyncMock(unit_id="ghost-id", source_sha="x")]
+            if fp == "z_target.py"
+            else []
+        )
+    )
+
+    ctx = make_context(
+        repo_id="r1",
+        repo_path=repo_path,
+        commit_sha="c2",
+        units_collection="repo_r1",
+        units_repo=units_repo,
+        graph_repo=graph_repo,
+        vector_repo=_fake_vector_repo(),
+    )
+    result = await IngestionPipeline().run(ctx)
+    assert result.failed_files == ()
+
+    kinds = [k for k, _ in events]
+    assert ("delete", "z_target.py") in events
+    # The edge pass runs strictly after the wipe.
+    assert kinds.index("edges") > kinds.index("delete")
+
+    caller_id = stable_unit_id("r1", "a_caller.py", "a_caller.caller")
+    target_id = stable_unit_id("r1", "z_target.py", "z_target.target_fn")
+    all_edges = [e for k, batch in events if k == "edges" for e in batch]  # type: ignore[union-attr]
+    assert (caller_id, "CALLS", target_id) in all_edges, (
+        "inbound cross-file edge severed by the wipe was not rewritten"
+    )
+
+
+@pytest.mark.asyncio
+async def test_edges_written_metric_uses_repo_return_value(tmp_path: Path) -> None:
+    """`edges_written` must reflect what the graph repo REPORTS as
+    written (post-fix: the actual relationship count), not len(edges)."""
+    repo_path = _make_forward_repo(tmp_path)
+    graph_repo = _fake_graph_repo()
+
+    async def short_count(edges):
+        return len(list(edges)) - 1  # pretend one edge was dropped
+
+    graph_repo.upsert_edges = AsyncMock(side_effect=short_count)
+    ctx = make_context(
+        repo_id="r1",
+        repo_path=repo_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=_fake_units_repo(),
+        graph_repo=graph_repo,
+        vector_repo=_fake_vector_repo(),
+    )
+    result = await IngestionPipeline().run(ctx)
+
+    assert graph_repo.upsert_edges.await_count == 1
+    [(batch,)] = [c.args for c in graph_repo.upsert_edges.await_args_list]
+    assert result.metrics["edges_written"] == len(list(batch)) - 1
+
+
+@pytest.mark.asyncio
+async def test_edge_pass_failure_degrades_but_does_not_fail_ingest(
+    tmp_path: Path,
+) -> None:
+    """A total edge-pass failure must not zero the whole ingest — nodes,
+    Postgres rows and vector payloads are already durable."""
+    repo_path = _make_forward_repo(tmp_path)
+    graph_repo = _fake_graph_repo()
+    graph_repo.upsert_edges = AsyncMock(side_effect=RuntimeError("neo4j down"))
+
+    ctx = make_context(
+        repo_id="r1",
+        repo_path=repo_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=_fake_units_repo(),
+        graph_repo=graph_repo,
+        vector_repo=_fake_vector_repo(),
+    )
+    result = await IngestionPipeline().run(ctx)
+
+    assert result.failed_files == ()
+    assert result.metrics["files_failed"] == 0
+    assert result.metrics["nodes_written"] > 0
+    assert result.metrics["edges_written"] == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_file_does_not_block_final_edge_pass(tmp_path: Path) -> None:
+    """If ONE file fails mid-run, the final edge pass still runs for the
+    survivors' edges."""
+    repo_path = _make_forward_repo(tmp_path)
+    units_repo = _fake_units_repo()
+
+    async def fail_for_z(units):
+        batch = list(units)
+        if any(u.file_path == "z_target.py" for u in batch):
+            raise RuntimeError("simulated DB outage")
+        return len(batch)
+
+    units_repo.upsert_units = AsyncMock(side_effect=fail_for_z)
+    graph_repo = _fake_graph_repo()
+    ctx = make_context(
+        repo_id="r1",
+        repo_path=repo_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=units_repo,
+        graph_repo=graph_repo,
+        vector_repo=_fake_vector_repo(),
+    )
+    result = await IngestionPipeline().run(ctx)
+
+    assert result.failed_files == ("z_target.py",)
+    # Survivor edges still hit the graph store in the final pass.
+    assert graph_repo.upsert_edges.await_count == 1
+    [(batch,)] = [c.args for c in graph_repo.upsert_edges.await_args_list]
+    srcs = {e.src_id for e in batch}
+    caller_mod = stable_unit_id("r1", "a_caller.py", "a_caller")
+    assert caller_mod in srcs
+
+
+# ---- Bug 2: qname collision disambiguation ---------------------------------
+async def _run_and_capture_units(tmp_path: Path) -> list[IngestionUnit]:
+    captured: list[IngestionUnit] = []
+    units_repo = _fake_units_repo()
+
+    async def _capture(units: Iterable[IngestionUnit]) -> int:
+        batch = list(units)
+        captured.extend(batch)
+        return len(batch)
+
+    units_repo.upsert_units = AsyncMock(side_effect=_capture)
+    ctx = make_context(
+        repo_id="r1",
+        repo_path=tmp_path,
+        commit_sha="c1",
+        units_collection="repo_r1",
+        units_repo=units_repo,
+        graph_repo=_fake_graph_repo(),
+        vector_repo=_fake_vector_repo(),
+    )
+    result = await IngestionPipeline().run(ctx)
+    assert result.failed_files == ()
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_qname_collision_keeps_both_units_with_suffix(tmp_path: Path) -> None:
+    """Two same-qname units (overload-style) must BOTH be stored: first
+    keeps its qname, second gets `#2` and a recomputed stable unit_id."""
+    (tmp_path / "dup.py").write_text(
+        "def f():\n    return 1\n\n\ndef f():\n    return 2\n"
+    )
+    captured = await _run_and_capture_units(tmp_path)
+
+    fns = [u for u in captured if u.kind.value == "fn"]
+    assert len(fns) == 2, "second overload was dropped"
+    qnames = {u.qualified_name for u in fns}
+    assert qnames == {"dup.f", "dup.f#2"}
+    ids = {u.unit_id for u in fns}
+    assert len(ids) == 2
+    suffixed = next(u for u in fns if u.qualified_name == "dup.f#2")
+    assert suffixed.unit_id == stable_unit_id("r1", "dup.py", "dup.f#2")
+    # First (by line) collider keeps the unsuffixed qname.
+    first = next(u for u in fns if u.qualified_name == "dup.f")
+    assert first.line_start < suffixed.line_start
+
+
+@pytest.mark.asyncio
+async def test_qname_collision_suffix_is_deterministic(tmp_path: Path) -> None:
+    (tmp_path / "dup.py").write_text(
+        "def f():\n    return 1\n\n\ndef f():\n    return 2\n\n\ndef f():\n    return 3\n"
+    )
+    run1 = await _run_and_capture_units(tmp_path)
+    run2 = await _run_and_capture_units(tmp_path)
+
+    assert [u.unit_id for u in run1] == [u.unit_id for u in run2]
+    assert {u.qualified_name for u in run1 if u.kind.value == "fn"} == {
+        "dup.f",
+        "dup.f#2",
+        "dup.f#3",
+    }
+
+
+@pytest.mark.asyncio
+async def test_class_qname_collision_remaps_children(tmp_path: Path) -> None:
+    """A colliding CLASS gets suffixed and its children's
+    parent_qualified_name follows."""
+    (tmp_path / "dup.py").write_text(
+        "class C:\n"
+        "    def m(self):\n"
+        "        return 1\n"
+        "\n"
+        "\n"
+        "class C:\n"
+        "    def m(self):\n"
+        "        return 2\n"
+    )
+    captured = await _run_and_capture_units(tmp_path)
+
+    classes = [u for u in captured if u.kind.value == "cls"]
+    assert {u.qualified_name for u in classes} == {"dup.C", "dup.C#2"}
+
+    methods = [u for u in captured if u.kind.value == "mth"]
+    assert {u.qualified_name for u in methods} == {"dup.C.m", "dup.C.m#2"}
+    second_method = next(u for u in methods if u.qualified_name == "dup.C.m#2")
+    assert second_method.parent_qualified_name == "dup.C#2", (
+        "child of the suffixed class must point at the suffixed parent"
+    )
+    first_method = next(u for u in methods if u.qualified_name == "dup.C.m")
+    assert first_method.parent_qualified_name == "dup.C"
 
 
 def _make_polyglot_repo(tmp_path: Path) -> Path:

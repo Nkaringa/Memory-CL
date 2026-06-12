@@ -195,11 +195,28 @@ def _mcp_check(registry: Any) -> DependencyCheck:
     )
 
 
-def _audit_check() -> DependencyCheck:
+def _audit_check(audit_logger: Any) -> DependencyCheck:
+    """Verify the APP's audit chain (``app.state.audit_logger``).
+
+    Same precedent as ``_resolve_mcp_registry``: the logger lives on the
+    FastAPI app state, not the ``AppState`` dataclass. Verifying a fresh
+    ``AuditLogger()`` here (the old behavior) always reported intact over
+    a permanently-empty chain. Note the chain is in-memory — it covers
+    the current process lifetime only.
+    """
     started = time.perf_counter()
+    if audit_logger is None:
+        return DependencyCheck(
+            name="audit_chain",
+            kind=DependencyKind.GOVERNANCE,
+            status=HealthStatus.DEGRADED,
+            required=False,
+            latency_ms=round((time.perf_counter() - started) * 1000, 3),
+            detail="audit logger not attached to app state",
+            error="missing app.state.audit_logger",
+        )
     try:
-        from core.governance import AuditLogger
-        intact = AuditLogger().verify()
+        intact = audit_logger.verify()
     except Exception as exc:
         return DependencyCheck(
             name="audit_chain",
@@ -259,7 +276,7 @@ async def dependencies(
 
     checks: list[DependencyCheck] = list(storage_checks)
     checks.append(_mcp_check(_resolve_mcp_registry(request)))
-    checks.append(_audit_check())
+    checks.append(_audit_check(getattr(request.app.state, "audit_logger", None)))
 
     # Stable ordering: kind first (storage < control < governance is the
     # operational reading order), then name within kind.

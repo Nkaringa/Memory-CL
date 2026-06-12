@@ -89,13 +89,23 @@ def _slice_source(source: str, line_start: int, line_end: int) -> str:
     return "".join(lines[line_start - 1 : line_end])
 
 
-def _is_constant_assign(node: ast.stmt) -> ast.Assign | None:
-    """Return the Assign iff `node` is a top-level UPPER_CASE constant."""
-    if not isinstance(node, ast.Assign):
+def _is_constant_assign(node: ast.stmt) -> ast.Assign | ast.AnnAssign | None:
+    """Return the assignment iff `node` is a top-level UPPER_CASE constant.
+
+    Handles both plain assignments (`X = 1`) and annotated assignments
+    (`X: int = 1`). Annotation-only declarations (`X: int` with no value)
+    are NOT constants — there is nothing assigned to extract.
+    """
+    if isinstance(node, ast.Assign):
+        if len(node.targets) != 1:
+            return None
+        target = node.targets[0]
+    elif isinstance(node, ast.AnnAssign):
+        if node.value is None:
+            return None
+        target = node.target
+    else:
         return None
-    if len(node.targets) != 1:
-        return None
-    target = node.targets[0]
     if isinstance(target, ast.Name) and target.id.isupper() and target.id.replace("_", "").isalnum():
         return node
     return None
@@ -314,11 +324,11 @@ def _emit_function(
 
 
 def _emit_constant(
-    assign: ast.Assign,
+    assign: ast.Assign | ast.AnnAssign,
     inputs: _ParseInputs,
     parent_qname: str,
 ) -> IngestionUnit:
-    target = assign.targets[0]
+    target = assign.target if isinstance(assign, ast.AnnAssign) else assign.targets[0]
     assert isinstance(target, ast.Name)
     qname = f"{parent_qname}.{target.id}" if parent_qname else target.id
     line_start = assign.lineno

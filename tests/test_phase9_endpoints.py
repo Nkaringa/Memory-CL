@@ -156,6 +156,59 @@ def test_audit_verify_reports_intact_chain() -> None:
     assert body["chain_length"] == 1
 
 
+# ---- audit wiring (B-fix: probes must verify the APP's logger, not a
+# fresh instance, otherwise tampering is never observable) -------------------
+def _intact_logger() -> AuditLogger:
+    logger = AuditLogger()
+    logger.record(
+        actor=AuditActor.SYSTEM, action=AuditAction.UPDATE,
+        entity_id="u", tenant_id="t", before_hash="x", after_hash="y",
+    )
+    return logger
+
+
+def _tampered_logger() -> AuditLogger:
+    from infra.audit.immutable_log_store import GENESIS_HASH, LogEntry
+
+    logger = _intact_logger()
+    store = logger.store
+    # Rewrite the payload while keeping the original hash — breaks the chain.
+    store._entries[0] = LogEntry(  # type: ignore[attr-defined]
+        seq=0, prev_hash=GENESIS_HASH,
+        hash=store.get(0).hash, payload={"x": 999},
+    )
+    return logger
+
+
+async def test_boot_probe_audit_verifies_app_state_logger() -> None:
+    from apps.api.bootstrap import BootSequence
+
+    ok = BootSequence(state=object(), audit_logger=_intact_logger())
+    assert await ok._probe_audit() is True
+
+    # A fresh-instance probe would report intact here; the app's actual
+    # chain is broken and the probe must see THAT chain.
+    bad = BootSequence(state=object(), audit_logger=_tampered_logger())
+    assert await bad._probe_audit() is False
+
+
+def test_health_audit_check_verifies_provided_logger() -> None:
+    from apps.api.routers.health import _audit_check
+    from schemas import HealthStatus
+
+    assert _audit_check(_intact_logger()).status == HealthStatus.OK
+    assert _audit_check(_tampered_logger()).status == HealthStatus.DOWN
+
+
+def test_health_audit_check_degrades_when_logger_missing() -> None:
+    from apps.api.routers.health import _audit_check
+    from schemas import HealthStatus
+
+    check = _audit_check(None)
+    assert check.status == HealthStatus.DEGRADED
+    assert check.required is False
+
+
 # ---- /status --------------------------------------------------------------
 def test_status_returns_full_posture() -> None:
     app = _build_app()

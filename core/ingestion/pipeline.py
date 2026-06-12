@@ -11,7 +11,15 @@ from core.ingestion.graph_builder import _UNIT_TO_NODE, GraphBuilder
 from core.ingestion.logevent import emit_phase2_event
 from core.observability import get_tracer
 from core.parsing import FileWalker, PythonParser, SourceParser, TreeSitterParser
-from schemas import FileRef, IngestionUnit, Language, NodeKind
+from schemas import (
+    FileRef,
+    GraphEdge,
+    IngestionUnit,
+    Language,
+    NodeKind,
+    UnitKind,
+    stable_unit_id,
+)
 from storage.repositories import VectorPoint
 
 if TYPE_CHECKING:
@@ -31,6 +39,69 @@ class IngestionResult:
     commit_sha: str
     metrics: dict[str, float | int]
     failed_files: tuple[str, ...]
+
+
+def _resolve_qname_collisions(
+    units: list[IngestionUnit],
+) -> tuple[list[IngestionUnit], int]:
+    """Disambiguate units within a file that share a qualified_name.
+
+    Overloads (e.g. C# constructors) legally share a qualified name, but
+    `unit_id = stable_unit_id(repo, path, qname)` is the primary key in
+    every store — same qname means same id, so last-write-wins dropped
+    all but one overload AND broke idempotency (the survivor flip-flopped
+    between runs, wasting re-embeds).
+
+    Suffix convention: the FIRST collider (by line order) keeps its
+    qualified_name verbatim; each subsequent collider gets a line-order
+    ordinal suffix `#2`, `#3`, … (e.g. `…SystemRandom.SystemRandom#2`)
+    and its unit_id is recomputed over the suffixed qname. The graph and
+    UI simply see distinct units under the suffixed names.
+
+    If a CLASS qname collides (rare), the suffixed class's children —
+    identified by parent_qualified_name match within the class's line
+    span — get their parent_qualified_name remapped to the suffixed
+    qname so DEFINES edges attach to the right parent.
+
+    Returns the (possibly rewritten) unit list and the collision count.
+    Deterministic: same input always yields the same suffixes and ids.
+    """
+    groups: dict[str, list[int]] = {}
+    for i, u in enumerate(units):
+        groups.setdefault(u.qualified_name, []).append(i)
+    colliding = {q: idxs for q, idxs in groups.items() if len(idxs) > 1}
+    if not colliding:
+        return units, 0
+
+    out = list(units)
+    collisions = 0
+    # (old_parent_qname, line_start, line_end, new_parent_qname)
+    parent_remaps: list[tuple[str, int, int, str]] = []
+    for qname, idxs in colliding.items():
+        ordered = sorted(idxs, key=lambda i: (units[i].line_start, units[i].line_end, i))
+        for ordinal, i in enumerate(ordered[1:], start=2):
+            u = units[i]
+            new_qname = f"{qname}#{ordinal}"
+            out[i] = u.model_copy(
+                update={
+                    "qualified_name": new_qname,
+                    "unit_id": stable_unit_id(u.repo_id, u.file_path, new_qname),
+                }
+            )
+            collisions += 1
+            if u.kind == UnitKind.CLASS:
+                parent_remaps.append((qname, u.line_start, u.line_end, new_qname))
+
+    for old_q, line_start, line_end, new_q in parent_remaps:
+        for i, u in enumerate(out):
+            if (
+                u.parent_qualified_name == old_q
+                and u.qualified_name != new_q  # never remap the class itself
+                and line_start <= u.line_start
+                and u.line_end <= line_end
+            ):
+                out[i] = u.model_copy(update={"parent_qualified_name": new_q})
+    return out, collisions
 
 
 def _default_parsers() -> dict[Language, SourceParser]:
@@ -94,11 +165,27 @@ class IngestionPipeline:
             file_units, failed_files = await self._parse_all(walk.files, ctx)
             qname_resolver = self._build_qname_resolver(file_units)
 
-            # ---- Pass 2: per-file graph + write.
+            # ---- Pass 2: per-file reconciliation + node/vector writes.
+            # Edges are NOT written here. Files ingest in alphabetical
+            # order, so a per-file edge write whose destination lives in
+            # a later file would MATCH nothing and be silently dropped
+            # (forward cross-file edges), and reconciliation's DETACH
+            # DELETE severs inbound edges from unchanged files that a
+            # per-file pass would never rewrite. Instead each file's
+            # edges are collected run-wide and upserted in a FINAL pass
+            # once every surviving file's nodes exist.
+            collected_edges: dict[tuple[str, str, str], GraphEdge] = {}
             for file_ref, units in file_units.items():
                 try:
-                    await self._ingest_file(file_ref, units, qname_resolver, ctx)
+                    file_edges = await self._ingest_file(
+                        file_ref, units, qname_resolver, ctx
+                    )
                 except Exception as exc:
+                    # Failure isolation: this file's edges are simply
+                    # absent from the final edge set. Edges from OTHER
+                    # files pointing into it may miss their endpoint in
+                    # the final pass — upsert_edges counts and reports
+                    # those as dropped rather than failing the run.
                     ctx.metrics.files_failed += 1
                     failed_files.append(file_ref.path)
                     emit_phase2_event(
@@ -110,6 +197,15 @@ class IngestionPipeline:
                         level="error",
                         error=str(exc),
                     )
+                else:
+                    for e in file_edges:
+                        collected_edges.setdefault(
+                            (e.src_id, e.kind.value, e.dst_id), e
+                        )
+
+            # ---- Final pass: run-wide edge upsert (always runs, even
+            # when some files failed — the survivors' edges still land).
+            await self._write_edges(collected_edges, ctx)
 
             ctx.metrics.duration_ms = (time.perf_counter() - run_start) * 1000
             metrics_payload = {
@@ -172,6 +268,19 @@ class IngestionPipeline:
                 failed.append(file_ref.path)
                 # parse_file already emitted an error event.
                 continue
+            # Language-agnostic overload disambiguation BEFORE any id is
+            # used as a storage key (see _resolve_qname_collisions).
+            units, collisions = _resolve_qname_collisions(units)
+            if collisions:
+                emit_phase2_event(
+                    event="qname_collisions_resolved",
+                    operation="ingestion.parse_file",
+                    status="success",
+                    duration_ms=0.0,
+                    file_path=file_ref.path,
+                    level="debug",
+                    collisions=collisions,
+                )
             out[file_ref] = units
             ctx.metrics.files_parsed += 1
             ctx.metrics.units_emitted += len(units)
@@ -194,7 +303,13 @@ class IngestionPipeline:
         units: list[IngestionUnit],
         resolver: dict[str, tuple[str, NodeKind]],
         ctx: IngestionContext,
-    ) -> None:
+    ) -> tuple[GraphEdge, ...]:
+        """Reconcile + write one file's units to Postgres/Neo4j/Qdrant.
+
+        Nodes and vector payloads are written here; EDGES are returned
+        to the caller, which upserts the whole run's edge set in a final
+        pass after every file's nodes exist (see `run`).
+        """
         start = time.perf_counter()
         with _tracer.start_as_current_span("ingestion.ingest_file") as span:
             span.set_attribute("repo_id", ctx.repo_id)
@@ -226,12 +341,12 @@ class IngestionPipeline:
             changed = await ctx.units_repo.upsert_units(units)
             ctx.metrics.units_changed += changed
 
-            # Neo4j: build nodes/edges then write
+            # Neo4j: build nodes + edges; write NODES only. Edges are
+            # returned for the run-wide final pass (forward cross-file
+            # targets don't exist yet at this point of the loop).
             graph = self._builder.build(units, qname_resolver=resolver)
             n_nodes = await ctx.graph_repo.upsert_nodes(graph.nodes)
-            n_edges = await ctx.graph_repo.upsert_edges(graph.edges)
             ctx.metrics.nodes_written += n_nodes
-            ctx.metrics.edges_written += n_edges
 
             # Phase 3: a unit is "changed" when its id is new OR its
             # source_sha differs from the row we just reconciled against.
@@ -303,6 +418,8 @@ class IngestionPipeline:
                 else:
                     ctx.metrics.units_embedded += len(changed_units)
 
+            # No `edges` field here on purpose: edges are written once,
+            # run-wide, after the per-file loop — see `edge_pass_ok`.
             emit_phase2_event(
                 event="ingest_file_ok",
                 operation="ingestion.ingest_file",
@@ -314,8 +431,58 @@ class IngestionPipeline:
                 units=len(units),
                 changed=changed,
                 nodes=n_nodes,
-                edges=n_edges,
             )
+            return graph.edges
+
+    async def _write_edges(
+        self,
+        collected: dict[tuple[str, str, str], GraphEdge],
+        ctx: IngestionContext,
+    ) -> None:
+        """Final run-wide edge pass.
+
+        Runs after every surviving file's nodes are upserted, so forward
+        cross-file edges resolve and inbound edges severed by the
+        reconciliation wipe are rewritten (the full run's edge set
+        includes the unchanged files' edges).
+
+        `ctx.metrics.edges_written` is counted ONCE here, from the graph
+        repo's honest written count — not per file, not len(edges).
+
+        A total edge-pass failure must NOT zero the whole ingest: units,
+        nodes and vector payloads are already durable, so we emit a
+        degraded `edge_pass_failed` event and keep the run alive — the
+        next ingest of the same commit replays the full edge set.
+        """
+        edges = sorted(
+            collected.values(), key=lambda e: (e.kind.value, e.src_id, e.dst_id)
+        )
+        if not edges:
+            return
+        start = time.perf_counter()
+        try:
+            written = await ctx.graph_repo.upsert_edges(edges)
+        except Exception as exc:
+            emit_phase2_event(
+                event="edge_pass_failed",
+                operation="ingestion.write_edges",
+                status="degraded",
+                duration_ms=(time.perf_counter() - start) * 1000,
+                level="warning",
+                edges=len(edges),
+                error=str(exc),
+            )
+            return
+        ctx.metrics.edges_written += written
+        emit_phase2_event(
+            event="edge_pass_ok",
+            operation="ingestion.write_edges",
+            status="success",
+            duration_ms=(time.perf_counter() - start) * 1000,
+            level="debug",
+            edges=len(edges),
+            written=written,
+        )
 
 
 def make_context(

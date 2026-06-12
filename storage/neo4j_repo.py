@@ -58,6 +58,24 @@ _EDGE_MERGE = (
     "    r.weight = $weight"
 )
 
+# Batch variant used by `upsert_edges`. UNWIND keeps it one round-trip per
+# edge kind (the relationship type can't be parameterized in Cypher).
+# Rows whose MATCH misses an endpoint simply vanish from the stream, so
+# `RETURN count(r)` is the number of relationships ACTUALLY merged
+# (created OR matched) — the honest "written" count. The shortfall vs the
+# attempted count is exactly the silently-dropped edges the old
+# fire-and-forget version over-reported.
+_EDGE_MERGE_BATCH = (
+    "UNWIND $edges AS e "
+    "MATCH (a {node_id: e.src_id}) "
+    "MATCH (b {node_id: e.dst_id}) "
+    "MERGE (a)-[r:%s]->(b) "
+    "SET r.repo_id = e.repo_id, "
+    "    r.commit_sha = e.commit_sha, "
+    "    r.weight = e.weight "
+    "RETURN count(r) AS written"
+)
+
 # Depth is inlined as a literal int (clamped in `neighbors()`): Neo4j
 # rejects parameters inside variable-length bounds, so `*1..$depth` is a
 # parse-time syntax error — the cause of the long-standing "0 neighbors"
@@ -210,6 +228,14 @@ class Neo4jGraphRepository:
             )
 
     async def upsert_edges(self, edges: Iterable[GraphEdge]) -> int:
+        """MERGE every edge; return the count ACTUALLY written.
+
+        "Written" = relationships the MERGE touched (created or matched).
+        An edge whose src/dst node doesn't exist matches nothing inside
+        the UNWIND and contributes 0 rows — those are counted as dropped
+        and reported via an `edges_dropped` warning event instead of
+        being silently folded into an optimistic len(edges).
+        """
         edges = list(edges)
         if not edges:
             return 0
@@ -218,28 +244,56 @@ class Neo4jGraphRepository:
         start = time.perf_counter()
         with _tracer.start_as_current_span("neo4j_repo.upsert_edges") as span:
             span.set_attribute("count", len(edges))
+            # One UNWIND batch per relationship type — Cypher can't
+            # parameterize the type, but batching by kind keeps this to
+            # a handful of round-trips per run instead of one per edge.
+            by_kind: dict[str, list[GraphEdge]] = {}
+            for e in edges:
+                by_kind.setdefault(e.kind.value, []).append(e)
+            written = 0
             async with self._driver.session(database=self._database) as session:
-                for e in edges:
-                    stmt = _EDGE_MERGE % e.kind.value
-                    await session.run(
+                for kind in sorted(by_kind):
+                    batch = by_kind[kind]
+                    stmt = _EDGE_MERGE_BATCH % kind  # safe: EdgeKind enum
+                    result = await session.run(
                         stmt,
                         {
-                            "src_id": e.src_id,
-                            "dst_id": e.dst_id,
-                            "repo_id": e.repo_id,
-                            "commit_sha": e.commit_sha,
-                            "weight": e.weight,
+                            "edges": [
+                                {
+                                    "src_id": e.src_id,
+                                    "dst_id": e.dst_id,
+                                    "repo_id": e.repo_id,
+                                    "commit_sha": e.commit_sha,
+                                    "weight": e.weight,
+                                }
+                                for e in batch
+                            ]
                         },
                     )
+                    rec = await result.single()
+                    written += int(rec["written"]) if rec else 0
+            dropped = len(edges) - written
+            span.set_attribute("written", written)
+            span.set_attribute("dropped", dropped)
             emit_phase2_event(
                 event="neo4j_upsert_edges",
                 operation="neo4j_repo.upsert_edges",
                 status="success",
                 duration_ms=(time.perf_counter() - start) * 1000,
                 count=len(edges),
+                written=written,
                 level="info",
             )
-            return len(edges)
+            if dropped > 0:
+                emit_phase2_event(
+                    event="edges_dropped",
+                    operation="neo4j_repo.upsert_edges",
+                    status="degraded",
+                    duration_ms=0.0,
+                    count=dropped,
+                    level="warning",
+                )
+            return written
 
     # ----- Reads -----
     async def get_node(self, node_id: str) -> GraphNode | None:

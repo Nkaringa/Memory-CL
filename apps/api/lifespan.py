@@ -170,7 +170,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # process into safe mode rather than crashing — the operator
         # decides recovery.
         from apps.api.bootstrap import BootSequence
-        outcome = await BootSequence(state=state).run()
+        # Stage 7 must verify the SAME audit chain the process appends to
+        # (app.state.audit_logger), not a fresh throwaway instance.
+        outcome = await BootSequence(
+            state=state, audit_logger=app.state.audit_logger,
+        ).run()
         app.state.boot_outcome = outcome
         if outcome.safe_mode_recommended or settings.safe_mode_enabled:
             app.state.safe_mode.enable(
