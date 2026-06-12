@@ -25,6 +25,7 @@ For the longer mental model: **[docs/01_OVERVIEW](docs/01_OVERVIEW.md)**.
 
 ## Key capabilities
 
+- **Multi-language ingestion** — Python (`.py`), JavaScript (`.js .mjs .cjs .jsx`), and TypeScript (`.ts .tsx .mts .cts`); declaration files (`.d.ts` / `.d.mts` / `.d.cts`) are skipped
 - **Hybrid retrieval** — graph, vector, and metadata channels blended by a fixed-weight ranking formula
 - **Explainable results** — every ranked entry surfaces its score breakdown + pipeline trace
 - **Deterministic outputs** — pinned by snapshot + replay, byte-identical across runs
@@ -186,7 +187,15 @@ Production-hardening highlights:
 │   ├── api/           FastAPI app, routers, lifespan, middleware
 │   ├── mcp/           MCP tool registry + executor
 │   └── cli/           memcl CLI
-├── core/              Business logic (retrieval, ranking, governance, scaling, …)
+├── core/
+│   ├── parsing/
+│   │   ├── base.py            SourceParser Protocol
+│   │   ├── python_parser.py   PythonParser (AST, hard-fails on syntax error)
+│   │   ├── treesitter_parser.py TreeSitterParser (JS/TS; error-tolerant)
+│   │   ├── qnames.py          module_qname_from_path shared helper
+│   │   └── file_walker.py     deterministic FileRef walk
+│   ├── ingestion/             pipeline orchestrator + graph builder
+│   └── …                      retrieval, ranking, governance, scaling, …
 ├── storage/           Postgres / Qdrant / Neo4j / Redis client wrappers
 ├── schemas/           Wire shapes shared by API + SDK + CLI
 ├── sdk/               AsyncMemoryClient (Python)

@@ -214,6 +214,57 @@ varies by deployment — some operators want safe-mode to gate
 ingestion only; others want full read-only. Keeping the flag
 generic lets operators make the call.
 
+## D-15 · tree-sitter for JS/TS parsing
+
+**Decision.** JavaScript and TypeScript are parsed via
+`tree-sitter==0.25.2` with the `tree-sitter-javascript==0.25.0` and
+`tree-sitter-typescript==0.23.2` grammar wheels. Python continues to
+use its own `ast` module (hard-fail on syntax error). The two parsers
+share the `SourceParser` Protocol defined in `core/parsing/base.py`.
+
+**Why tree-sitter over alternatives.**
+
+- *Native-toolchain subprocess* (node + `@typescript-eslint/parser`):
+  requires Node on the backend, adds process-spawn overhead, and
+  couples the Python service to an npm dependency tree.
+- *Regex / manual heuristics*: fragile for any non-trivial JS/TS
+  construct (destructured imports, arrow-function class properties,
+  generic type signatures).
+- *tree-sitter*: pre-built binary wheels (no build toolchain needed),
+  one consistent engine for all future grammar additions (Go, Rust,
+  …), and built-in error-tolerance — a file with a syntax error still
+  yields a partial parse rather than a hard failure.
+
+**Error-tolerance asymmetry.** Python files with syntax errors
+hard-fail into `failed_files` (unchanged behaviour — Python AST
+does not support partial parses). JS/TS files with syntax errors
+yield partial units and emit a `parse_partial` log event. This
+asymmetry is intentional: it matches each engine's native contract.
+
+**Cost.** Three additional pinned wheels in `requirements.lock.txt`.
+The grammar binaries are pre-compiled; no C compiler is required at
+install time.
+
+## D-16 · Path-derived dotted qnames for JS/TS
+
+**Decision.** Qualified names for JS/TS units are derived from the
+file path using the shared `module_qname_from_path()` helper in
+`core/parsing/qnames.py` — the same approach used for Python modules.
+Example: `src/utils/index.ts` → `src.utils`.
+
+**Why.** Graph semantics must be uniform across languages. Cross-file
+`IMPORTS` edges resolve a relative specifier (e.g. `../utils`) to the
+same dotted qname the target file's module unit carries. Bare package
+specifiers (e.g. `lodash`) that cannot be resolved to a local file
+become External graph nodes. This keeps the resolver logic in one
+place and the graph shape consistent.
+
+**Tradeoff.** TypeScript `interface`, `type`, and `enum` declarations
+are deliberately skipped — they are type-level constructs with no
+runtime identity, so they would add graph nodes that can never be
+reached by a call edge. Anonymous default exports likewise produce no
+unit because there is no stable qualified name to assign.
+
 ---
 
 ## Open questions / future tradeoffs

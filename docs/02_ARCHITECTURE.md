@@ -56,7 +56,7 @@ apps/mcp/           ──── MCP server (auth, registry, router)
 apps/cli/           ──── memcl console script
 apps/ui/static/     ──── Phase-9 read-only HTML inspector
 
-core/parsing/        ──► AST → IngestionUnit list
+core/parsing/        ──► source → IngestionUnit list (Python via AST; JS/TS via tree-sitter)
 core/ingestion/      ──► orchestrate parse + build + write to 3 stores
 core/compression/    ──► IngestionUnit → DenseRecord; deterministic JSON
 core/summarization/  ──► DenseModule / DenseApi / DenseGraphSlice

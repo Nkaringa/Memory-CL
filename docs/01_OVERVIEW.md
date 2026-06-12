@@ -87,7 +87,7 @@ UI  /retrieve   ────►  same as above + per-entry "Why this result?"
 │  └── ui       Phase-9 static inspector + Phase-10 Next.js UI    │
 ├─────────────────────────────────────────────────────────────────┤
 │ core/  (intelligence)                                          │
-│  ├── parsing      AST → IngestionUnit                          │
+│  ├── parsing      source → IngestionUnit (Python/JS/TS)                          │
 │  ├── ingestion    pipeline orchestrator + graph builder        │
 │  ├── compression  dense encoder + serializer + module compactor│
 │  ├── summarization  module/api/graph summarizers               │

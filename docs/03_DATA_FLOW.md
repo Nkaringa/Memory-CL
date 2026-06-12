@@ -25,10 +25,17 @@ core/ingestion/pipeline.py · IngestionPipeline.run(ctx)
   │ ── pass 1: parse all files ─────────────────────────────────
   │  core/parsing/file_walker.py · FileWalker.walk()
   │    → sorted FileRef list (deterministic POSIX path order)
+  │  core/ingestion/pipeline.py · _default_parsers()
+  │    → per-language registry:
+  │        .py          → PythonParser        (python_parser.py)
+  │        .js .mjs .cjs .jsx → TreeSitterParser (treesitter_parser.py)
+  │        .ts .tsx .mts .cts → TreeSitterParser
+  │        .d.ts / .d.mts / .d.cts — skipped (declaration files)
   │  for each file:
-  │    core/parsing/python_parser.py · PythonParser.parse_file()
-  │      → list[IngestionUnit]  (module + classes + fns + consts)
-  │    failures: log + skip; reported in `failed_files`
+  │    parser.parse_file()  → list[IngestionUnit]
+  │      (module + classes + fns + consts + imports + calls)
+  │    Python:     syntax errors → hard-fail → `failed_files`
+  │    JS/TS:      syntax errors → partial units + `parse_partial` log
   │
   │ ── build cross-file qname resolver ──────────────────────────
   │  resolver = { qname: (unit_id, NodeKind) for every unit }
