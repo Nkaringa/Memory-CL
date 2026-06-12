@@ -251,9 +251,14 @@ class Neo4jGraphRepository:
             for e in edges:
                 by_kind.setdefault(e.kind.value, []).append(e)
             written = 0
+            # Track per-kind counts so the warning can report which
+            # relationship types lost edges and offer a sample of keys.
+            kind_attempted: dict[str, int] = {}
+            kind_written: dict[str, int] = {}
             async with self._driver.session(database=self._database) as session:
                 for kind in sorted(by_kind):
                     batch = by_kind[kind]
+                    kind_attempted[kind] = len(batch)
                     stmt = _EDGE_MERGE_BATCH % kind  # safe: EdgeKind enum
                     result = await session.run(
                         stmt,
@@ -271,7 +276,9 @@ class Neo4jGraphRepository:
                         },
                     )
                     rec = await result.single()
-                    written += int(rec["written"]) if rec else 0
+                    kw = int(rec["written"]) if rec else 0
+                    kind_written[kind] = kw
+                    written += kw
             dropped = len(edges) - written
             span.set_attribute("written", written)
             span.set_attribute("dropped", dropped)
@@ -285,12 +292,35 @@ class Neo4jGraphRepository:
                 level="info",
             )
             if dropped > 0:
+                # Per-kind shortfall helps diagnose which node types are
+                # missing.  We also include a bounded sample of attempted
+                # (src_id, kind, dst_id) keys from the worst-hit kind so
+                # operators can trace the dangling references without
+                # scanning the full batch.  Note: these are *attempted*
+                # keys, not confirmed-dropped keys — the field name is
+                # intentionally `sample_attempted_keys` to be honest.
+                per_kind: dict[str, dict[str, int]] = {
+                    k: {"attempted": kind_attempted[k], "written": kind_written[k]}
+                    for k in sorted(kind_attempted)
+                    if kind_attempted[k] - kind_written[k] > 0
+                }
+                worst_kind = max(
+                    per_kind,
+                    key=lambda k: per_kind[k]["attempted"] - per_kind[k]["written"],
+                )
+                sample_keys = [
+                    (e.src_id, e.kind.value, e.dst_id)
+                    for e in by_kind[worst_kind][:5]
+                ]
                 emit_phase2_event(
                     event="edges_dropped",
                     operation="neo4j_repo.upsert_edges",
                     status="degraded",
                     duration_ms=0.0,
                     count=dropped,
+                    per_kind=per_kind,
+                    worst_kind=worst_kind,
+                    sample_attempted_keys=sample_keys,
                     level="warning",
                 )
             return written

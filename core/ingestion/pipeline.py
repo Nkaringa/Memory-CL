@@ -77,11 +77,20 @@ def _resolve_qname_collisions(
     collisions = 0
     # (old_parent_qname, line_start, line_end, new_parent_qname)
     parent_remaps: list[tuple[str, int, int, str]] = []
+    # Build the full set of qnames already present so we can skip any
+    # candidate that would itself collide (e.g. input has [X, X, X#2]).
+    all_qnames: set[str] = {u.qualified_name for u in units}
     for qname, idxs in colliding.items():
         ordered = sorted(idxs, key=lambda i: (units[i].line_start, units[i].line_end, i))
         for ordinal, i in enumerate(ordered[1:], start=2):
             u = units[i]
-            new_qname = f"{qname}#{ordinal}"
+            # Fixpoint: bump the ordinal until the candidate is free.
+            candidate = f"{qname}#{ordinal}"
+            while candidate in all_qnames:
+                ordinal += 1
+                candidate = f"{qname}#{ordinal}"
+            new_qname = candidate
+            all_qnames.add(new_qname)
             out[i] = u.model_copy(
                 update={
                     "qualified_name": new_qname,

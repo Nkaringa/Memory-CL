@@ -192,6 +192,8 @@ def test_invoke_without_audit_logger_attached_still_works() -> None:
 def test_audit_entry_never_contains_raw_api_key() -> None:
     import json
 
+    import structlog.testing
+
     r = ToolRegistry()
     r.register(_EchoTool())
     audit = AuditLogger()
@@ -199,17 +201,28 @@ def test_audit_entry_never_contains_raw_api_key() -> None:
 
     with patch.dict("os.environ", {"MCP_API_KEY": "secret-123"}):
         get_settings.cache_clear()
-        with TestClient(app) as client:
-            resp = client.post(
-                "/mcp/tools/echo",
-                json={"msg": "x"},
-                headers={"X-API-Key": "secret-123"},
-            )
+        with structlog.testing.capture_logs() as captured_logs:
+            with TestClient(app) as client:
+                resp = client.post(
+                    "/mcp/tools/echo",
+                    json={"msg": "x"},
+                    headers={"X-API-Key": "secret-123"},
+                )
     assert resp.status_code == 200
+
+    # Audit chain must not contain the raw key.
     assert len(audit.store) == 1
     payload = audit.store.tail().payload
     assert "secret-123" not in json.dumps(payload)
     assert payload["metadata"]["authenticated"] is True
+
+    # structlog events emitted during the request must also be free of the
+    # raw key — this covers ExecutionContext.user_scope and the
+    # mcp_request_complete event's user_scope field.
+    all_log_text = json.dumps(captured_logs)
+    assert "secret-123" not in all_log_text, (
+        f"raw API key leaked into structlog events: {captured_logs}"
+    )
 
 
 def test_invoked_tools_visible_via_audit_tail_and_verify() -> None:

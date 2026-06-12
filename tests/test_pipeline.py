@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core.ingestion import IngestionPipeline, make_context
-from schemas import GraphEdge, GraphNode, IngestionUnit, stable_unit_id
+from core.ingestion.pipeline import _resolve_qname_collisions
+from schemas import GraphEdge, GraphNode, IngestionUnit, UnitKind, stable_unit_id
+from schemas.ingest import Language, content_sha
 
 
 def _make_repo(tmp_path: Path) -> Path:
@@ -956,3 +958,45 @@ async def test_pipeline_parses_python_and_js_ts(tmp_path: Path) -> None:
     assert "pkg.tool.py_fn" in qnames
     assert "web.app.run" in qnames
     assert "web.scorer.score" in qnames
+
+
+# ---- Bug 3: collision-proof suffix minting ---------------------------------
+
+def _make_unit(qname: str, line: int) -> IngestionUnit:
+    """Minimal IngestionUnit for direct _resolve_qname_collisions tests."""
+    src = f"def {qname.split('.')[-1].replace('#', '_')}(): pass"
+    return IngestionUnit(
+        unit_id=stable_unit_id("r1", "f.py", qname),
+        repo_id="r1",
+        commit_sha="c1",
+        kind=UnitKind.FUNCTION,
+        name=qname.split(".")[-1],
+        qualified_name=qname,
+        file_path="f.py",
+        language=Language.PYTHON,
+        line_start=line,
+        line_end=line + 1,
+        content=src,
+        source_sha=content_sha(src),
+    )
+
+
+def test_suffix_collision_proof_existing_suffix() -> None:
+    """Input [X, X, X#2] must yield [X, X#3, X#2] — the minted suffix must
+    skip X#2 because it is already taken by the third unit."""
+    units = [
+        _make_unit("f.foo", 1),
+        _make_unit("f.foo", 3),
+        _make_unit("f.foo#2", 5),  # pre-existing X#2 occupies the slot
+    ]
+    resolved, collisions = _resolve_qname_collisions(units)
+
+    qnames = [u.qualified_name for u in resolved]
+    assert qnames[0] == "f.foo"           # first keeps its name
+    assert qnames[2] == "f.foo#2"         # pre-existing suffix is untouched
+    assert qnames[1] == "f.foo#3"         # minted suffix skipped the occupied slot
+    assert len(set(qnames)) == 3, "all three qnames must be distinct"
+    # unit_ids must match the (recomputed) qnames
+    assert resolved[1].unit_id == stable_unit_id("r1", "f.py", "f.foo#3")
+    assert resolved[2].unit_id == stable_unit_id("r1", "f.py", "f.foo#2")
+    assert collisions == 1

@@ -178,7 +178,7 @@ async def invoke_tool(
 
         ctx = ExecutionContext.new(
             state=getattr(request.app.state, "app_state", None),
-            user_scope=api_key,  # opaque scope marker for audit
+            user_scope=_scope_marker(api_key),
             request_id=request_id,
         )
         executor = ToolExecutor(registry)
@@ -193,7 +193,7 @@ async def invoke_tool(
             request_id=request_id,
             status=response.status.value,
             latency_ms=latency_ms,
-            user_scope=api_key,
+            user_scope=_scope_marker(api_key),
             level="debug",
         )
         # Hash-chained audit entry — appended for success AND failure
