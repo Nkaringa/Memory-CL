@@ -47,8 +47,8 @@ class WalkResult:
 class FileWalker:
     """Deterministic, gitignore-aware repo walker.
 
-    Walks Python and JS/TS sources. Adding more languages later is a
-    pure additive change to `LANGUAGE_EXTENSIONS`.
+    Walks Python, JS/TS, C#, Go, Java, and Rust sources. Adding more
+    languages later is a pure additive change to `LANGUAGE_EXTENSIONS`.
     """
 
     LANGUAGE_EXTENSIONS: tuple[tuple[str, Language], ...] = (
@@ -61,6 +61,12 @@ class FileWalker:
         (".tsx", Language.TYPESCRIPT),
         (".mts", Language.TYPESCRIPT),
         (".cts", Language.TYPESCRIPT),
+        # Batch 2 — no `.csx` (C# scripting) on purpose; `_test.go` files
+        # ARE included (tests are code).
+        (".cs", Language.CSHARP),
+        (".go", Language.GO),
+        (".java", Language.JAVA),
+        (".rs", Language.RUST),
     )
 
     # TypeScript declaration files carry types only, no logic. Their

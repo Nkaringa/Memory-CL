@@ -84,7 +84,12 @@ def test_walker_maps_js_ts_extensions(tmp_path) -> None:
     (tmp_path / "f.tsx").write_text("export default () => null;")
     (tmp_path / "g.mts").write_text("export {};")
     (tmp_path / "h.cts").write_text("export {};")
+    (tmp_path / "i.cs").write_text("class A {}")
+    (tmp_path / "j.go").write_text("package main")
+    (tmp_path / "k.java").write_text("class A {}")
+    (tmp_path / "l.rs").write_text("fn main() {}")
     (tmp_path / "skip.css").write_text("body {}")
+    (tmp_path / "skip.csx").write_text("// C# script — not walked")
 
     result = FileWalker().walk(tmp_path, repo_id="r")
     langs = {f.path: f.language for f in result.files}
@@ -98,7 +103,20 @@ def test_walker_maps_js_ts_extensions(tmp_path) -> None:
         "f.tsx": Language.TYPESCRIPT,
         "g.mts": Language.TYPESCRIPT,
         "h.cts": Language.TYPESCRIPT,
+        "i.cs": Language.CSHARP,
+        "j.go": Language.GO,
+        "k.java": Language.JAVA,
+        "l.rs": Language.RUST,
     }
+
+
+def test_walker_includes_go_test_files(tmp_path) -> None:
+    # Plan decision: `_test.go` files ARE code — they must be walked.
+    (tmp_path / "server.go").write_text("package main")
+    (tmp_path / "server_test.go").write_text("package main")
+
+    paths = [f.path for f in FileWalker().walk(tmp_path, repo_id="r").files]
+    assert paths == ["server.go", "server_test.go"]
 
 
 def test_walker_skips_declaration_files(tmp_path) -> None:
