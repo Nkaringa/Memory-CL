@@ -297,3 +297,15 @@ def test_new_expression_recorded_as_call() -> None:
     calls = by_qname["src.app.build"].calls
     assert "Service" in calls
     assert "pkg.Worker" in calls
+
+
+def test_degenerate_import_specifiers_skipped() -> None:
+    units = _parse(
+        """
+        import x from "../";
+        import y from "";
+        import { ok } from "./real";
+        """,
+        file_path="src/app.js",
+    )
+    assert units[0].imports == ["src.real.ok"]

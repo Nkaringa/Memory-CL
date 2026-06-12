@@ -579,6 +579,8 @@ def _extract_imports(root: Node, inputs: _ParseInputs) -> list[str]:
             if source is None:
                 continue  # plain export — not an import
             module = _normalize_import_source(_string_value(source), inputs.file_path)
+            if not module or module == ".":
+                continue  # degenerate specifier ("" or bare "../") — no graph value
             names = _imported_names(node)
             if names:
                 out.extend(f"{module}.{n}" for n in names)
@@ -600,11 +602,11 @@ def _extract_imports(root: Node, inputs: _ParseInputs) -> list[str]:
                     continue
                 strings = [c for c in args.named_children if c.type == "string"]
                 if len(strings) == 1:
-                    out.append(
-                        _normalize_import_source(
-                            _string_value(strings[0]), inputs.file_path
-                        )
+                    module = _normalize_import_source(
+                        _string_value(strings[0]), inputs.file_path
                     )
+                    if module and module != ".":
+                        out.append(module)
     return out
 
 
