@@ -158,3 +158,53 @@ def test_edges_validated_against_edge_rules() -> None:
     nodes = {n.node_id: n for n in res.nodes}
     for e in res.edges:
         assert is_edge_allowed(nodes[e.src_id].kind, e.kind, nodes[e.dst_id].kind)
+
+
+def test_js_units_produce_import_call_and_external_edges() -> None:
+    from core.parsing import TreeSitterParser
+    from schemas import Language
+
+    source = (
+        'import { score } from "./scorer";\n'
+        'import React from "react";\n'
+        "function helper(x) { return x; }\n"
+        "export const run = (x) => helper(score(x));\n"
+    )
+    units = TreeSitterParser(Language.JAVASCRIPT).parse_file(
+        source=source,
+        repo_id="r1",
+        file_path="web/app.js",
+        commit_sha="c1",
+    )
+    result = GraphBuilder().build(units)
+
+    by_kind = {}
+    for e in result.edges:
+        by_kind.setdefault(e.kind, []).append(e)
+
+    node_by_id = {n.node_id: n for n in result.nodes}
+
+    # Same-file call helper() resolved to the real unit via the
+    # `<module>.callee` candidate — this exercises the _module_qname fix.
+    helper_unit = next(u for u in units if u.qualified_name == "web.app.helper")
+    run_unit = next(u for u in units if u.qualified_name == "web.app.run")
+    call_targets = {
+        e.dst_id for e in by_kind.get(EdgeKind.CALLS, []) if e.src_id == run_unit.unit_id
+    }
+    assert helper_unit.unit_id in call_targets
+
+    # Bare package import → External node.
+    external_qnames = {
+        n.qualified_name for n in result.nodes if n.kind == NodeKind.EXTERNAL
+    }
+    assert "react" in external_qnames
+
+    # Module unit carries IMPORTS edges.
+    module_unit = units[0]
+    import_dsts = {
+        node_by_id[e.dst_id].qualified_name
+        for e in by_kind.get(EdgeKind.IMPORTS, [])
+        if e.src_id == module_unit.unit_id
+    }
+    assert "react" in import_dsts
+    assert "web.scorer.score" in import_dsts
