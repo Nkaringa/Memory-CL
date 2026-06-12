@@ -32,6 +32,11 @@ class BootSequence:
     """
 
     state: object  # apps.api.state.AppState — kept loose to avoid up-imports
+    # The PROCESS's audit logger (app.state.audit_logger). Stage 7 must
+    # verify the chain that's actually serving /audit/* — verifying a
+    # fresh AuditLogger() would always pass over an empty chain and never
+    # catch tampering. Optional so legacy callers keep working.
+    audit_logger: object | None = None
 
     def build(self) -> HealthGate:
         return HealthGate([
@@ -138,9 +143,14 @@ class BootSequence:
         return len(build_default_registry().names()) >= 7
 
     async def _probe_audit(self) -> bool:
-        from core.governance import AuditLogger
+        logger = self.audit_logger
+        if logger is None:
+            # No app logger handed in — fall back to a throwaway instance,
+            # which only proves the chain machinery constructs/verifies.
+            from core.governance import AuditLogger
+            logger = AuditLogger()
         try:
-            return AuditLogger().verify()
+            return bool(logger.verify())  # type: ignore[attr-defined]
         except Exception:
             return False
 

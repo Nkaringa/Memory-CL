@@ -101,6 +101,57 @@ def test_module_level_constants_emitted() -> None:
     assert "pkg.mod.__version__" not in qnames
 
 
+def test_annotated_module_constants_emitted() -> None:
+    units = _parse("""
+        LEGAL_TRANSITIONS: dict[str, list[str]] = {
+            "draft": ["active"],
+        }
+        TIMEOUT_S: int = 30
+        lower_annotated: int = 1
+        DECLARED_ONLY: int
+    """)
+    by_qname = {u.qualified_name: u for u in units}
+
+    const = by_qname["pkg.mod.LEGAL_TRANSITIONS"]
+    assert const.kind == UnitKind.CONSTANT
+    assert const.parent_qualified_name == "pkg.mod"
+    # Content slice spans the FULL annotated assignment (multi-line value).
+    assert const.line_start == 1
+    assert const.line_end == 3
+    assert const.content.startswith("LEGAL_TRANSITIONS: dict[str, list[str]] = {")
+    assert const.content.rstrip().endswith("}")
+
+    assert by_qname["pkg.mod.TIMEOUT_S"].kind == UnitKind.CONSTANT
+
+    # lowercase annotated assignments are not constants
+    assert "pkg.mod.lower_annotated" not in by_qname
+    # annotation-only declarations (no value) are not constants
+    assert "pkg.mod.DECLARED_ONLY" not in by_qname
+
+
+def test_annotated_class_constants_emitted() -> None:
+    units = _parse("""
+        class Service:
+            VERSION: str = "1"
+            count: int = 0
+            PENDING: int
+
+            def m(self):
+                pass
+    """)
+    by_qname = {u.qualified_name: u for u in units}
+
+    version = by_qname["pkg.mod.Service.VERSION"]
+    assert version.kind == UnitKind.CONSTANT
+    assert version.parent_qualified_name == "pkg.mod.Service"
+    assert version.line_start == 2
+    assert version.line_end == 2
+    assert version.content.strip() == 'VERSION: str = "1"'
+
+    assert "pkg.mod.Service.count" not in by_qname
+    assert "pkg.mod.Service.PENDING" not in by_qname
+
+
 def test_function_signature_is_compact_def_line() -> None:
     units = _parse("""
         def add(a: int, b: int = 0, *args, **kw) -> int:

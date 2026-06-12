@@ -38,6 +38,7 @@ from sqlalchemy import text
 
 from apps.api.lifespan import client_proxy, driver_proxy, engine_proxy
 from core.ingestion import IngestionPipeline, make_context
+from core.ingestion.graph_builder import _UNIT_TO_NODE, GraphBuilder
 from core.ingestion.pipeline import IngestionResult
 from core.parsing import FileWalker, PythonParser, TreeSitterParser
 from core.retrieval.graph_retriever import GraphRetriever
@@ -187,6 +188,25 @@ def _expected_units(repo_path: Path, repo_id: str) -> list[IngestionUnit]:
     return units
 
 
+def _expected_edge_count(units: list[IngestionUnit]) -> int:
+    """Independently re-derive the run-wide edge set the pipeline builds
+    (per-file GraphBuilder over the FULL qname resolver, deduplicated),
+    so the Neo4j edge count can be checked EXACTLY. The pre-fix pipeline
+    silently dropped forward cross-file edges (MATCH…MERGE against
+    not-yet-written nodes) while still reporting len(edges) as written —
+    an exact-count assertion catches both halves of that bug."""
+    resolver = {u.qualified_name: (u.unit_id, _UNIT_TO_NODE[u.kind]) for u in units}
+    by_file: dict[str, list[IngestionUnit]] = {}
+    for u in units:
+        by_file.setdefault(u.file_path, []).append(u)
+    builder = GraphBuilder()
+    edges: set[tuple[str, str, str]] = set()
+    for path in sorted(by_file):
+        result = builder.build(by_file[path], qname_resolver=resolver)
+        edges |= {(e.src_id, e.kind.value, e.dst_id) for e in result.edges}
+    return len(edges)
+
+
 async def _ingest(stores: Stores, repo_id: str, repo_path: Path) -> tuple[str, IngestionResult]:
     """Mirror apps/api/routers/ingest.py: ensure collection, run pipeline."""
     collection = f"repo_{repo_id}"
@@ -281,6 +301,17 @@ async def test_golden_python_repo_roundtrip(stores: Stores) -> None:
         assert nodes > 0
         assert edges > 0
 
+        # NK-Base regression: NO edge may be silently dropped. The walk is
+        # alphabetical (pkg/services/auth.py before pkg/utils.py), so any
+        # per-file edge write would race ahead of its targets; the final
+        # edge pass must land the EXACT re-derived run-wide edge set, and
+        # edges_written must be the store's honest count of it.
+        expected_edges = _expected_edge_count(expected)
+        assert edges == expected_edges, (
+            f"Neo4j has {edges} edges, expected {expected_edges} — edges dropped"
+        )
+        assert result.metrics["edges_written"] == expected_edges
+
         # Qdrant: collection exists, one point per unit.
         assert await stores.qdrant.client.collection_exists(collection_name=collection)
         assert await _qdrant_point_count(stores, collection) == len(expected)
@@ -355,6 +386,12 @@ async def test_golden_js_ts_repo_roundtrip(stores: Stores) -> None:
         nodes, edges = await _neo4j_counts(stores, repo_id)
         assert nodes > 0
         assert edges > 0
+
+        # Exact edge-set check through the tree-sitter path too (covers
+        # the cross-file mathUtils -> logger import).
+        expected_edges = _expected_edge_count(expected)
+        assert edges == expected_edges
+        assert result.metrics["edges_written"] == expected_edges
 
         assert await stores.qdrant.client.collection_exists(collection_name=collection)
         assert await _qdrant_point_count(stores, collection) == len(expected)

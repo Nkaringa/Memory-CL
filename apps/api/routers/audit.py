@@ -49,7 +49,11 @@ async def tail(
     state: AppStateDep,
     limit: int = Query(default=50, gt=0, le=1000),
 ) -> AuditTailResponse:
-    """Return the most recent `limit` audit entries (deterministic order)."""
+    """Return the most recent `limit` audit entries (deterministic order).
+
+    The chain is held in memory (``ImmutableLogStore``) — it covers the
+    current process lifetime only and resets on restart.
+    """
     logger = _resolve_audit_logger(request, state)
     if logger is None:
         raise HTTPException(
@@ -74,7 +78,12 @@ async def tail(
 async def verify(
     request: Request, state: AppStateDep,
 ) -> AuditVerifyResponse:
-    """Re-walk the audit chain and report whether it's intact."""
+    """Re-walk the audit chain and report whether it's intact.
+
+    Verifies the app-state logger — the same chain MCP tool invocations
+    append to. The chain is per-process lifetime (in-memory store): a
+    restart starts a new, empty chain.
+    """
     from infra.audit.immutable_log_store import ChainBrokenError
 
     logger = _resolve_audit_logger(request, state)

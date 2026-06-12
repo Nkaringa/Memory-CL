@@ -163,6 +163,85 @@ async def test_upsert_edge_writes_relationship_with_provenance() -> None:
 
 
 @pytest.mark.asyncio
+async def test_upsert_edges_returns_actual_written_count() -> None:
+    """upsert_edges must return the relationships ACTUALLY written, not
+    len(edges): an edge whose endpoint MATCH misses produces 0 rows and
+    must be counted as dropped."""
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    edges = [
+        GraphEdge(src_id="f1", kind=EdgeKind.CALLS, dst_id="f2",
+                  repo_id="r", commit_sha="c"),
+        GraphEdge(src_id="f1", kind=EdgeKind.CALLS, dst_id="ghost",
+                  repo_id="r", commit_sha="c"),
+        GraphEdge(src_id="m1", kind=EdgeKind.IMPORTS, dst_id="m2",
+                  repo_id="r", commit_sha="c"),
+    ]
+    # One result row per kind-batch: CALLS wrote 1 of 2, IMPORTS 1 of 1.
+    driver.session_obj.next_results = [
+        _FakeResult([{"written": 1}]),
+        _FakeResult([{"written": 1}]),
+    ]
+    written = await repo.upsert_edges(edges)
+    assert written == 2  # NOT 3 — the ghost edge was dropped
+
+
+@pytest.mark.asyncio
+async def test_upsert_edges_batches_per_kind_and_counts_rows() -> None:
+    """Edges are written via per-kind UNWIND batches whose statements
+    RETURN count(r), so missed-endpoint edges are countable."""
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    edges = [
+        GraphEdge(src_id="f1", kind=EdgeKind.CALLS, dst_id="f2",
+                  repo_id="r", commit_sha="c", weight=0.5),
+        GraphEdge(src_id="f2", kind=EdgeKind.CALLS, dst_id="f3",
+                  repo_id="r", commit_sha="c"),
+        GraphEdge(src_id="m1", kind=EdgeKind.IMPORTS, dst_id="m2",
+                  repo_id="r", commit_sha="c"),
+    ]
+    driver.session_obj.next_results = [
+        _FakeResult([{"written": 2}]),
+        _FakeResult([{"written": 1}]),
+    ]
+    written = await repo.upsert_edges(edges)
+    assert written == 3
+
+    runs = driver.session_obj.runs
+    assert len(runs) == 2  # one UNWIND batch per kind
+    calls_stmt, calls_params = runs[0]
+    imports_stmt, imports_params = runs[1]
+    assert "UNWIND $edges" in calls_stmt
+    assert ":CALLS]" in calls_stmt
+    assert "RETURN count(r)" in calls_stmt
+    assert [e["src_id"] for e in calls_params["edges"]] == ["f1", "f2"]
+    assert calls_params["edges"][0]["weight"] == 0.5
+    assert calls_params["edges"][0]["commit_sha"] == "c"
+    assert ":IMPORTS]" in imports_stmt
+    assert [e["dst_id"] for e in imports_params["edges"]] == ["m2"]
+
+
+@pytest.mark.asyncio
+async def test_upsert_edges_empty_input_short_circuits() -> None:
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    assert await repo.upsert_edges([]) == 0
+    assert driver.session_obj.runs == []
+
+
+@pytest.mark.asyncio
+async def test_upsert_edges_still_validates_edge_rules() -> None:
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    await repo.upsert_node(_node("m1", NodeKind.MODULE))
+    await repo.upsert_node(_node("f1", NodeKind.FUNCTION))
+    bad = GraphEdge(src_id="m1", kind=EdgeKind.CALLS, dst_id="f1",
+                    repo_id="r", commit_sha="c")
+    with pytest.raises(EdgeNotAllowed):
+        await repo.upsert_edges([bad])
+
+
+@pytest.mark.asyncio
 async def test_delete_subgraph_returns_deleted_count() -> None:
     driver = _FakeDriver()
     repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
