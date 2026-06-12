@@ -68,15 +68,14 @@ def test_dispatcher_accepts_batch2_language(language: Language) -> None:
         file_path=file_path,
         commit_sha=COMMIT,
     )
-    # Stub extractors return [] — exactly one module unit for now.
-    assert len(units) == 1
+    # Dispatcher contract only: module unit first, correct identity.
+    # Per-language extraction behavior is pinned in tests/test_<lang>_parser.py.
+    assert len(units) >= 1
     mod = units[0]
     assert mod.kind == UnitKind.MODULE
     assert mod.language == language
     assert mod.qualified_name == module_qname_from_path(file_path)
     assert mod.content == source
-    assert mod.imports == []
-    assert mod.docstring is None
 
 
 def test_dispatcher_rejects_python() -> None:
