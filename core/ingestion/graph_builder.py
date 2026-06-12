@@ -42,18 +42,33 @@ def _external_id(qualified_name: str) -> str:
     return f"external:{qualified_name}"
 
 
+_SOURCE_SUFFIXES: tuple[str, ...] = (
+    ".py",
+    ".jsx", ".mjs", ".cjs", ".js",
+    ".tsx", ".mts", ".cts", ".ts",
+)
+
+
 def _module_qname(file_path: str) -> str:
-    """Mirror of `core.parsing.python_parser.module_qname_from_path`.
+    """Mirror of `core.parsing.qnames.module_qname_from_path`.
 
     Inlined to keep this module's import surface narrow — graph_builder
     already depends on parsing semantically; pulling the function in
-    would create a redundant runtime dependency edge.
+    would create a redundant runtime dependency edge. Kept in sync by
+    tests/test_qnames.py::test_graph_builder_mirror_stays_in_sync.
     """
-    if file_path.endswith(".py"):
-        parts = file_path[:-3].split("/")
-    else:
-        parts = file_path.split("/")
-    if parts and parts[-1] == "__init__":
+    is_python = False
+    stem_path = file_path
+    for suffix in _SOURCE_SUFFIXES:
+        if file_path.endswith(suffix):
+            stem_path = file_path[: -len(suffix)]
+            is_python = suffix == ".py"
+            break
+    parts = stem_path.split("/")
+    if len(parts) > 1 and (
+        (is_python and parts[-1] == "__init__")
+        or (not is_python and parts[-1] == "index")
+    ):
         parts = parts[:-1]
     return ".".join(parts)
 

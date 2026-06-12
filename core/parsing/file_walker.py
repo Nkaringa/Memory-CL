@@ -47,13 +47,26 @@ class WalkResult:
 class FileWalker:
     """Deterministic, gitignore-aware repo walker.
 
-    Phase 2 walks for `*.py` only. Adding more languages later is a
+    Walks Python and JS/TS sources. Adding more languages later is a
     pure additive change to `LANGUAGE_EXTENSIONS`.
     """
 
     LANGUAGE_EXTENSIONS: tuple[tuple[str, Language], ...] = (
         (".py", Language.PYTHON),
+        (".js", Language.JAVASCRIPT),
+        (".mjs", Language.JAVASCRIPT),
+        (".cjs", Language.JAVASCRIPT),
+        (".jsx", Language.JAVASCRIPT),
+        (".ts", Language.TYPESCRIPT),
+        (".tsx", Language.TYPESCRIPT),
+        (".mts", Language.TYPESCRIPT),
+        (".cts", Language.TYPESCRIPT),
     )
+
+    # TypeScript declaration files carry types only, no logic. Their
+    # suffix per `path.suffix` is just ".ts"/".mts"/".cts", so they need
+    # a name-based check, not a suffix-table entry.
+    _DECLARATION_SUFFIXES: tuple[str, ...] = (".d.ts", ".d.mts", ".d.cts")
 
     def __init__(
         self,
@@ -80,6 +93,8 @@ class FileWalker:
                 continue
             rel = path.relative_to(root).as_posix()
             if spec.match_file(rel):
+                continue
+            if path.name.endswith(self._DECLARATION_SUFFIXES):
                 continue
             language = ext_to_lang.get(path.suffix)
             if language is None:

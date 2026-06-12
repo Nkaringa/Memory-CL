@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from core.parsing import FileWalker, WalkResult
+from schemas import Language
 
 
 @pytest.fixture
@@ -72,3 +73,39 @@ def test_extra_ignores_compose_with_gitignore(repo: Path) -> None:
     walker = FileWalker(extra_ignores=("tests/",))
     paths = [f.path for f in walker.walk(repo, repo_id="r1").files]
     assert all(not p.startswith("tests/") for p in paths)
+
+
+def test_walker_maps_js_ts_extensions(tmp_path) -> None:
+    (tmp_path / "a.js").write_text("const x = 1;")
+    (tmp_path / "b.mjs").write_text("export const y = 1;")
+    (tmp_path / "c.cjs").write_text("module.exports = {};")
+    (tmp_path / "d.jsx").write_text("export default () => null;")
+    (tmp_path / "e.ts").write_text("const z: number = 1;")
+    (tmp_path / "f.tsx").write_text("export default () => null;")
+    (tmp_path / "g.mts").write_text("export {};")
+    (tmp_path / "h.cts").write_text("export {};")
+    (tmp_path / "skip.css").write_text("body {}")
+
+    result = FileWalker().walk(tmp_path, repo_id="r")
+    langs = {f.path: f.language for f in result.files}
+
+    assert langs == {
+        "a.js": Language.JAVASCRIPT,
+        "b.mjs": Language.JAVASCRIPT,
+        "c.cjs": Language.JAVASCRIPT,
+        "d.jsx": Language.JAVASCRIPT,
+        "e.ts": Language.TYPESCRIPT,
+        "f.tsx": Language.TYPESCRIPT,
+        "g.mts": Language.TYPESCRIPT,
+        "h.cts": Language.TYPESCRIPT,
+    }
+
+
+def test_walker_skips_declaration_files(tmp_path) -> None:
+    (tmp_path / "real.ts").write_text("const x = 1;")
+    (tmp_path / "types.d.ts").write_text("declare const x: number;")
+    (tmp_path / "esm.d.mts").write_text("declare const y: number;")
+    (tmp_path / "cjs.d.cts").write_text("declare const z: number;")
+
+    result = FileWalker().walk(tmp_path, repo_id="r")
+    assert [f.path for f in result.files] == ["real.ts"]

@@ -25,6 +25,8 @@ class UnitKind(StrEnum):
 
 class Language(StrEnum):
     PYTHON = "python"
+    JAVASCRIPT = "javascript"
+    TYPESCRIPT = "typescript"
     # Reserved for later phases — adding values here is backward-compatible.
 
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from core.ingestion.logevent import emit_phase2_event
 from core.observability import get_tracer
+from core.parsing.qnames import module_qname_from_path
 from schemas import (
     IngestionUnit,
     Language,
@@ -18,24 +19,8 @@ _tracer = get_tracer("core.parsing.python_parser")
 
 
 # ---------------------------------------------------------------------------
-# Helpers — qualified-name derivation and AST → string conversions
+# Helpers — AST → string conversions
 # ---------------------------------------------------------------------------
-def module_qname_from_path(file_path: str) -> str:
-    """Convert a repo-relative POSIX path to a Python module qualified name.
-
-    Examples:
-        "pkg/mod.py"        -> "pkg.mod"
-        "pkg/__init__.py"   -> "pkg"
-        "top.py"            -> "top"
-    """
-    if not file_path.endswith(".py"):
-        return file_path.replace("/", ".")
-    parts = file_path[:-3].split("/")
-    if parts and parts[-1] == "__init__":
-        parts = parts[:-1]
-    return ".".join(parts)
-
-
 def _attr_chain(node: ast.AST) -> str | None:
     """Reconstruct a dotted name from an Attribute/Name chain.
 

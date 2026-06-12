@@ -82,7 +82,7 @@ docker compose logs api 2>&1 | grep '"file_path":"<path>"'
 
 Common causes:
 
-- **Syntax error** — non-Python or pre-3.10 syntax. Inspect the file.
+- **Syntax error** — Python files hard-fail on any syntax error (pre-3.10 syntax, non-Python content); JS/TS files emit `parse_partial` and yield partial units instead. Inspect the file and the structured log for a `parse_partial` or `parse_error` event.
 - **OSError on read** — file deleted between walk and parse, or
   permission denied.
 - **`EdgeRuleViolation`** — programmer error in graph builder; stop
