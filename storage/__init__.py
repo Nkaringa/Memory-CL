@@ -9,6 +9,7 @@ from storage.redis import RedisClient
 from storage.repositories import (
     GraphRepository,
     IngestionUnitRepository,
+    QnameMatch,
     RepoSummary,
     VectorHit,
     VectorPoint,
@@ -25,6 +26,7 @@ __all__ = [
     "PostgresIngestionRepository",
     "QdrantStorageClient",
     "QdrantVectorRepository",
+    "QnameMatch",
     "RedisClient",
     "RepoSummary",
     "StorageClient",

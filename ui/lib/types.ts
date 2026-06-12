@@ -231,6 +231,16 @@ export interface ReposResponse {
   repos: RepoInfo[];
 }
 
+export interface QnameMatch {
+  qualified_name: string;
+  kind: string;
+}
+
+export interface QnamesResponse {
+  repo_id: string;
+  matches: QnameMatch[];
+}
+
 // ---- Generic API error ----------------------------------------------------
 export interface ApiErrorBody {
   detail?: string | Record<string, unknown>;

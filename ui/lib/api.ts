@@ -13,6 +13,7 @@ import type {
   IngestResponse,
   McpToolList,
   McpToolResponse,
+  QnamesResponse,
   ReadinessResponse,
   ReplayResponse,
   ReposResponse,
@@ -72,6 +73,13 @@ export class AsyncMemoryClient {
   // ------ repos ------------------------------------------------------------
   listRepos(): Promise<ReposResponse> {
     return this.get<ReposResponse>("/repos");
+  }
+
+  searchQnames(repoId: string, q: string, limit = 20): Promise<QnamesResponse> {
+    const params = new URLSearchParams({ q, limit: String(limit) });
+    return this.get<QnamesResponse>(
+      `/repos/${encodeURIComponent(repoId)}/qnames?${params.toString()}`,
+    );
   }
 
   // ------ status -----------------------------------------------------------
@@ -238,4 +246,9 @@ export function getMemoryClient(): AsyncMemoryClient {
 /** Convenience wrapper consumed by RepoSelect and ToolRunner. */
 export function listRepos(): Promise<ReposResponse> {
   return getMemoryClient().listRepos();
+}
+
+/** Convenience wrapper consumed by QnameInput. */
+export function searchQnames(repoId: string, q: string): Promise<QnamesResponse> {
+  return getMemoryClient().searchQnames(repoId, q);
 }

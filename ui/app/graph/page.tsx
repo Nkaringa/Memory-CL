@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { GitGraph } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,14 +9,29 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
 import { RepoSelect } from "@/components/RepoSelect";
+import { QnameInput } from "@/components/QnameInput";
 import { ErrorState } from "@/components/ui/error-state";
 import { GraphViewer } from "@/components/GraphViewer";
 import { getMemoryClient } from "@/lib/api";
 import type { McpToolResponse } from "@/lib/types";
 
+// useSearchParams needs a Suspense boundary for static prerendering in the
+// app router, so the page itself is a thin wrapper around the real content.
 export default function GraphPage() {
-  const [node, setNode] = useState("");
-  const [repoId, setRepoId] = useState("");
+  return (
+    <Suspense fallback={null}>
+      <GraphPageInner />
+    </Suspense>
+  );
+}
+
+function GraphPageInner() {
+  const searchParams = useSearchParams();
+  const initialNode = searchParams.get("node") ?? "";
+  const initialRepo = searchParams.get("repo") ?? "";
+
+  const [node, setNode] = useState(initialNode);
+  const [repoId, setRepoId] = useState(initialRepo);
   const [depth, setDepth] = useState(2);
   const [submittedDepth, setSubmittedDepth] = useState<number | null>(null);
 
@@ -31,6 +47,19 @@ export default function GraphPage() {
     setSubmittedDepth(depth);
     mutation.mutate({ d: depth });
   }
+
+  // Deep-link support: /graph?node=<qname>&repo=<repo_id> (e.g. from the
+  // Retrieve page's "graph →" action) auto-runs the traversal exactly once.
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (autoRan.current) return;
+    autoRan.current = true;
+    if (initialNode && initialRepo) {
+      setSubmittedDepth(depth);
+      mutation.mutate({ d: depth });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // When the user drags the depth slider in the GraphViewer, automatically
   // re-issue the same query at the new depth — but only if they've already
@@ -67,11 +96,12 @@ export default function GraphPage() {
           >
             <div>
               <label className="text-xs muted block mb-1">node</label>
-              <Input
+              <QnameInput
                 required
                 value={node}
-                onChange={(e) => setNode(e.target.value)}
-                placeholder="qualified_name or unit_id"
+                onChange={setNode}
+                repoId={repoId}
+                placeholder="qualified_name or unit_id — type to search"
               />
             </div>
             <div>
