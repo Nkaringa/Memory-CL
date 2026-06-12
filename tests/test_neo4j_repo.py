@@ -263,6 +263,90 @@ async def test_edges_among_empty_input_short_circuits() -> None:
     assert driver.session_obj.runs == []  # never touched the driver
 
 
+# ---- repo_graph -------------------------------------------------------------
+def _graph_row(node_id: str, kind: str = "Function") -> dict[str, Any]:
+    return {"n": {"node_id": node_id, "kind": kind, "repo_id": "r",
+                  "qualified_name": node_id, "name": node_id}}
+
+
+@pytest.mark.asyncio
+async def test_repo_graph_excludes_external_by_default() -> None:
+    """External nodes DO carry repo_id (graph_builder writes the referencing
+    unit's repo_id onto them), so the bare repo_id match catches them and
+    they must be filtered out by label."""
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    driver.session_obj.next_results = [_FakeResult([])]
+    await repo.repo_graph("r")
+
+    stmt, params = driver.session_obj.runs[0]
+    assert "{repo_id: $repo_id}" in stmt
+    assert "NOT n:External" in stmt
+    assert "LIMIT $max_nodes" in stmt
+    assert params == {"repo_id": "r", "max_nodes": 5000}
+
+
+@pytest.mark.asyncio
+async def test_repo_graph_includes_external_when_requested() -> None:
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    driver.session_obj.next_results = [_FakeResult([])]
+    await repo.repo_graph("r", include_external=True)
+
+    stmt, _ = driver.session_obj.runs[0]
+    assert "External" not in stmt
+
+
+@pytest.mark.asyncio
+async def test_repo_graph_clamps_max_nodes() -> None:
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    driver.session_obj.next_results = [_FakeResult([]), _FakeResult([])]
+
+    await repo.repo_graph("r", max_nodes=0)
+    _, params = driver.session_obj.runs[-1]
+    assert params["max_nodes"] == 1
+
+    await repo.repo_graph("r", max_nodes=999_999)
+    _, params = driver.session_obj.runs[-1]
+    assert params["max_nodes"] == 20_000
+
+
+@pytest.mark.asyncio
+async def test_repo_graph_returns_sorted_nodes_and_edges_among_them() -> None:
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    driver.session_obj.next_results = [
+        _FakeResult([_graph_row("z"), _graph_row("a"), _graph_row("m")]),
+        _FakeResult([
+            {"src": "z", "kind": "CALLS", "dst": "a"},
+            {"src": "a", "kind": "CALLS", "dst": "m"},
+        ]),
+    ]
+    nodes, edges = await repo.repo_graph("r")
+
+    assert [n.node_id for n in nodes] == ["a", "m", "z"]
+    assert edges == [("a", "CALLS", "m"), ("z", "CALLS", "a")]
+
+    # Edge fetch reuses the edges_among pattern over the returned ids.
+    stmt, params = driver.session_obj.runs[-1]
+    assert "a.node_id IN $ids" in stmt
+    assert "b.node_id IN $ids" in stmt
+    assert sorted(params["ids"]) == ["a", "m", "z"]
+
+
+@pytest.mark.asyncio
+async def test_repo_graph_empty_repo_skips_edge_query() -> None:
+    driver = _FakeDriver()
+    repo = Neo4jGraphRepository(driver=driver)  # type: ignore[arg-type]
+    driver.session_obj.next_results = [_FakeResult([])]
+    nodes, edges = await repo.repo_graph("ghost")
+
+    assert nodes == []
+    assert edges == []
+    assert len(driver.session_obj.runs) == 1  # edges_among short-circuited
+
+
 @pytest.mark.asyncio
 async def test_neighbors_depth_clamped_to_safe_bounds() -> None:
     driver = _FakeDriver()

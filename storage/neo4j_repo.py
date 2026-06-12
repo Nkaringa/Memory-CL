@@ -71,6 +71,27 @@ _EDGES_AMONG_QUERY = (
     "RETURN a.node_id AS src, type(r) AS kind, b.node_id AS dst"
 )
 
+# Whole-repo node scan. External nodes DO carry a `repo_id` property —
+# graph_builder._resolve_or_external stamps the referencing unit's repo_id
+# onto them — so the bare property match catches them and they must be
+# excluded by LABEL when include_external=False. Caveat: external node ids
+# ("external:<qname>") are not repo-scoped, so when two repos reference the
+# same external qname the node's repo_id is last-writer-wins; an External
+# node may therefore be missing from a repo's graph if another ingest
+# overwrote its repo_id. ORDER BY before LIMIT keeps truncation
+# deterministic. LIMIT accepts parameters (unlike variable-length bounds).
+_REPO_GRAPH_NODES_QUERY = (
+    "MATCH (n {repo_id: $repo_id}) "
+    "RETURN n ORDER BY n.node_id LIMIT $max_nodes"
+)
+_REPO_GRAPH_NODES_NO_EXTERNAL_QUERY = (
+    "MATCH (n {repo_id: $repo_id}) "
+    "WHERE NOT n:External "
+    "RETURN n ORDER BY n.node_id LIMIT $max_nodes"
+)
+
+_MAX_REPO_GRAPH_NODES = 20_000
+
 _DELETE_FOR_FILE = (
     "MATCH (n {repo_id: $repo_id, file_path: $file_path}) "
     "DETACH DELETE n "
@@ -256,6 +277,43 @@ class Neo4jGraphRepository:
             records = await result.data()
         edges = {(rec["src"], rec["kind"], rec["dst"]) for rec in records}
         return sorted(edges)
+
+    async def repo_graph(
+        self,
+        repo_id: str,
+        *,
+        include_external: bool = False,
+        max_nodes: int = 5000,
+    ) -> tuple[list[GraphNode], list[tuple[str, str, str]]]:
+        """Whole-repo snapshot: every node plus all edges among them.
+
+        Nodes are matched by the `repo_id` property; External nodes carry
+        one too (see _REPO_GRAPH_NODES_QUERY comment), so they are excluded
+        by label unless `include_external=True`. `max_nodes` is clamped to
+        [1, 20000]. Output is sorted (nodes by node_id, edges by tuple) so
+        the same graph always serializes identically.
+        """
+        max_nodes = max(1, min(int(max_nodes), _MAX_REPO_GRAPH_NODES))
+        query = (
+            _REPO_GRAPH_NODES_QUERY
+            if include_external
+            else _REPO_GRAPH_NODES_NO_EXTERNAL_QUERY
+        )
+        with _tracer.start_as_current_span("neo4j_repo.repo_graph") as span:
+            span.set_attribute("repo_id", repo_id)
+            span.set_attribute("include_external", include_external)
+            span.set_attribute("max_nodes", max_nodes)
+            async with self._driver.session(database=self._database) as session:
+                result = await session.run(
+                    query, {"repo_id": repo_id, "max_nodes": max_nodes}
+                )
+                records = await result.data()
+            nodes = sorted(
+                (_record_to_node(rec["n"]) for rec in records),
+                key=lambda n: n.node_id,
+            )
+            edges = await self.edges_among([n.node_id for n in nodes])
+            return nodes, edges
 
     async def delete_subgraph_for_file(self, repo_id: str, file_path: str) -> int:
         with _tracer.start_as_current_span("neo4j_repo.delete_subgraph_for_file") as span:

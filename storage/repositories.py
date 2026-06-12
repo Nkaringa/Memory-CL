@@ -110,6 +110,17 @@ class GraphRepository(Protocol):
 
     async def edges_among(self, node_ids: Sequence[str]) -> list[tuple[str, str, str]]: ...
 
+    async def repo_graph(
+        self,
+        repo_id: str,
+        *,
+        include_external: bool = False,
+        max_nodes: int = 5000,
+    ) -> tuple[list[GraphNode], list[tuple[str, str, str]]]:
+        """Whole-repo snapshot: nodes (sorted, capped at `max_nodes` after
+        clamping to [1, 20000]) plus all directed edges among them."""
+        ...
+
     async def delete_subgraph_for_file(self, repo_id: str, file_path: str) -> int:
         """Detach-delete every node whose file_path matches; for reconciliation."""
         ...
