@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight, Sparkles, GitGraph, ScrollText, ShieldCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { FirstRunCard } from "@/components/FirstRunCard";
 
 const PILLARS = [
   {
@@ -41,6 +42,7 @@ const PILLARS = [
 export default function HomePage() {
   return (
     <div className="max-w-5xl mx-auto space-y-12">
+      <FirstRunCard />
       <header className="pt-8 pb-4 border-b border-border">
         <div className="text-xs font-mono muted uppercase tracking-wider mb-2">
           memory-cl · transparency layer

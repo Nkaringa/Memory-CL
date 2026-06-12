@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from core.ingestion.logevent import emit_phase2_event
 from core.observability import get_tracer
 from schemas import IngestionUnit, Language, UnitKind
+from storage.repositories import RepoSummary
 
 _tracer = get_tracer("storage.postgres_repo")
 
@@ -138,6 +139,19 @@ _SELECT_FOR_FILE = text(
 _DELETE_FOR_FILE = text(
     "DELETE FROM ingestion_units "
     "WHERE repo_id = :repo_id AND file_path = :file_path"
+)
+
+# Pure aggregate — no bind parameters on purpose (and B16 reminder: no
+# colon-prefixed tokens may appear anywhere in this string, comments
+# included, or SQLAlchemy's text() will demand them as parameters).
+_LIST_REPOS = text(
+    "SELECT repo_id, "
+    "COUNT(*) AS units, "
+    "COUNT(DISTINCT file_path) AS files, "
+    "ARRAY_AGG(DISTINCT language) AS languages "
+    "FROM ingestion_units "
+    "GROUP BY repo_id "
+    "ORDER BY repo_id"
 )
 
 
@@ -285,6 +299,23 @@ class PostgresIngestionRepository:
                 _SELECT_FOR_FILE, {"repo_id": repo_id, "file_path": file_path}
             )
             return [_row_to_unit(r) for r in result.all()]
+
+    async def list_repos(self) -> Sequence[RepoSummary]:
+        async with self._engine.connect() as conn:
+            result = await conn.execute(_LIST_REPOS)
+            rows = result.all()
+        out: list[RepoSummary] = []
+        for row in rows:
+            m: Any = row._mapping if hasattr(row, "_mapping") else row
+            out.append(
+                RepoSummary(
+                    repo_id=m["repo_id"],
+                    units=int(m["units"]),
+                    files=int(m["files"]),
+                    languages=tuple(m["languages"] or ()),
+                )
+            )
+        return out
 
     async def delete_units_for_file(self, repo_id: str, file_path: str) -> int:
         with _tracer.start_as_current_span("postgres_repo.delete_units_for_file") as span:

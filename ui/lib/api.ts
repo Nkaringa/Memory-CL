@@ -15,6 +15,7 @@ import type {
   McpToolResponse,
   ReadinessResponse,
   ReplayResponse,
+  ReposResponse,
   RetrieveRequest,
   RetrieveResponse,
   SnapshotResponse,
@@ -68,6 +69,11 @@ export class AsyncMemoryClient {
     this.requestId = opts.requestId ?? defaultRequestId;
   }
 
+  // ------ repos ------------------------------------------------------------
+  listRepos(): Promise<ReposResponse> {
+    return this.get<ReposResponse>("/repos");
+  }
+
   // ------ status -----------------------------------------------------------
   status(): Promise<StatusResponse> {
     return this.get<StatusResponse>("/status");
@@ -84,7 +90,9 @@ export class AsyncMemoryClient {
 
   // ------ ingestion --------------------------------------------------------
   ingest(req: IngestRequest): Promise<IngestResponse> {
-    return this.post<IngestResponse>("/ingest", req);
+    // Ingestion can take several minutes for large repos; use a generous
+    // client-side timeout so we don't abort a legitimate long-running run.
+    return this.post<IngestResponse>("/ingest", req, { timeoutMs: 600_000 });
   }
 
   // ------ MCP --------------------------------------------------------------
@@ -133,22 +141,24 @@ export class AsyncMemoryClient {
   }
 
   // ------ internal HTTP plumbing ------------------------------------------
-  private get<T>(path: string): Promise<T> {
-    return this.request<T>("GET", path);
+  private get<T>(path: string, opts?: { timeoutMs?: number }): Promise<T> {
+    return this.request<T>("GET", path, undefined, opts);
   }
 
-  private post<T>(path: string, body: unknown): Promise<T> {
-    return this.request<T>("POST", path, body);
+  private post<T>(path: string, body: unknown, opts?: { timeoutMs?: number }): Promise<T> {
+    return this.request<T>("POST", path, body, opts);
   }
 
   private async request<T>(
     method: "GET" | "POST",
     path: string,
     body?: unknown,
+    opts?: { timeoutMs?: number },
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const effectiveTimeout = opts?.timeoutMs ?? this.timeoutMs;
+    const timer = setTimeout(() => controller.abort(), effectiveTimeout);
     const headers: Record<string, string> = {
       "content-type": "application/json",
       accept: "application/json",
@@ -223,4 +233,9 @@ export function getMemoryClient(): AsyncMemoryClient {
     });
   }
   return _client;
+}
+
+/** Convenience wrapper consumed by RepoSelect and ToolRunner. */
+export function listRepos(): Promise<ReposResponse> {
+  return getMemoryClient().listRepos();
 }

@@ -14,6 +14,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
 import { computePosture, PostureBadge } from "@/components/ui/posture-badge";
 import { StatusPanel } from "@/components/StatusPanel";
+import { FirstRunCard } from "@/components/FirstRunCard";
 import { getMemoryClient } from "@/lib/api";
 
 export default function DashboardPage() {
@@ -48,6 +49,8 @@ export default function DashboardPage() {
           </div>
         }
       />
+
+      <FirstRunCard />
 
       {status.isError && (
         <ErrorState
@@ -120,8 +123,8 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <ul className="text-sm space-y-2">
-              <Pipeline label="Phase 2" name="Ingestion"   desc="walk → parse → graph + vector + canonical" />
-              <Pipeline label="Phase 3" name="Compression" desc="dense encode → summarize → embed" />
+              <Pipeline label="Phase 2" name="Ingestion"   desc="walk → parse → graph + keyword metadata + canonical" />
+              <Pipeline label="Phase 3" name="Compression" desc="dense encode → summarize → embed (pending — not yet enabled)" />
               <Pipeline label="Phase 4" name="Retrieval"   desc="hybrid + ranking + context" />
               <Pipeline label="Phase 5" name="MCP"         desc="7 tools over Phase 1-4" />
               <Pipeline label="Phase 6" name="Lifecycle"   desc="decay / refresh / compaction" />

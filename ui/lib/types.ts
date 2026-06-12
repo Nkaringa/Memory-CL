@@ -199,6 +199,19 @@ export interface AuditVerifyResponse {
   broken_at_seq: number | null;
 }
 
+// ---- Repos ----------------------------------------------------------------
+export interface RepoInfo {
+  repo_id: string;
+  units: number;
+  files: number;
+  languages: string[];
+}
+
+export interface ReposResponse {
+  schema_version: string;
+  repos: RepoInfo[];
+}
+
 // ---- Generic API error ----------------------------------------------------
 export interface ApiErrorBody {
   detail?: string | Record<string, unknown>;

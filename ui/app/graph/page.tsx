@@ -7,14 +7,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
+import { RepoSelect } from "@/components/RepoSelect";
 import { ErrorState } from "@/components/ui/error-state";
 import { GraphViewer } from "@/components/GraphViewer";
 import { getMemoryClient } from "@/lib/api";
 import type { McpToolResponse } from "@/lib/types";
 
 export default function GraphPage() {
-  const [node, setNode] = useState("pkg.utils.add");
-  const [repoId, setRepoId] = useState("acme");
+  const [node, setNode] = useState("");
+  const [repoId, setRepoId] = useState("");
   const [depth, setDepth] = useState(2);
   const [submittedDepth, setSubmittedDepth] = useState<number | null>(null);
 
@@ -34,11 +35,15 @@ export default function GraphPage() {
   // When the user drags the depth slider in the GraphViewer, automatically
   // re-issue the same query at the new depth — but only if they've already
   // run one query (no surprise network calls before "Traverse" is clicked).
+  // Debounced 300 ms so rapid slider drags don't flood the API.
   useEffect(() => {
     if (submittedDepth === null) return;
     if (submittedDepth === depth) return;
-    setSubmittedDepth(depth);
-    mutation.mutate({ d: depth });
+    const timer = setTimeout(() => {
+      setSubmittedDepth(depth);
+      mutation.mutate({ d: depth });
+    }, 300);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depth]);
 
@@ -71,7 +76,7 @@ export default function GraphPage() {
             </div>
             <div>
               <label className="text-xs muted block mb-1">repo_id</label>
-              <Input value={repoId} onChange={(e) => setRepoId(e.target.value)} />
+              <RepoSelect value={repoId} onChange={setRepoId} />
             </div>
             <div>
               <label className="text-xs muted block mb-1">depth</label>
@@ -84,7 +89,7 @@ export default function GraphPage() {
               />
             </div>
             <div className="flex items-end">
-              <Button type="submit" disabled={mutation.isPending}>
+              <Button type="submit" disabled={mutation.isPending || !node.trim() || !repoId}>
                 {mutation.isPending ? "Running…" : "Traverse"}
               </Button>
             </div>

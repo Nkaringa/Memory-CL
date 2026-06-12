@@ -119,7 +119,7 @@ export function Sidebar() {
         <Link href="/status" className="block">
           <PostureBadge posture={posture} size="sm" className="w-full justify-center" />
         </Link>
-        <div className="text-[10px] font-mono muted text-center">v0.1 · production-ready</div>
+        <div className="text-[10px] font-mono muted text-center">v0.1</div>
       </footer>
     </aside>
   );

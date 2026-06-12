@@ -8,7 +8,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from apps.api.lifespan import lifespan
 from apps.api.middleware import RequestContextMiddleware
-from apps.api.routers import audit, health, ingest, retrieve, snapshot, status
+from apps.api.routers import audit, health, ingest, repos, retrieve, snapshot, status
 from apps.mcp import mcp_router
 from core import get_settings
 
@@ -44,6 +44,7 @@ def create_app() -> FastAPI:
     app.include_router(snapshot.router)
     app.include_router(audit.router)
     app.include_router(status.router)
+    app.include_router(repos.router)
 
     if settings.ui_enabled:
         ui_dir = Path(__file__).resolve().parent.parent / "ui" / "static"
