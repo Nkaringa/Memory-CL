@@ -132,6 +132,32 @@ export interface GraphQueryEdge {
   dst_id: string;
 }
 
+// ---- Whole-repo graph (GET /repos/{repo_id}/graph, backend ≥ 4f06ac6) ------
+export interface RepoGraphNode {
+  node_id: string;
+  kind: string;
+  qualified_name: string;
+  name: string;
+  file_path: string | null;
+  line_start: number | null;
+  line_end: number | null;
+}
+
+export interface RepoGraphEdge {
+  src_id: string;
+  kind: string;
+  dst_id: string;
+}
+
+export interface RepoGraphResponse {
+  repo_id: string;
+  /** True when the backend hit max_nodes and dropped the remainder. */
+  truncated: boolean;
+  nodes: RepoGraphNode[];
+  edges: RepoGraphEdge[];
+  counts: Record<string, number>;
+}
+
 // ---- Ingestion ------------------------------------------------------------
 export interface IngestRequest {
   repo_id: string;

@@ -15,6 +15,7 @@ import type {
   McpToolResponse,
   QnamesResponse,
   ReadinessResponse,
+  RepoGraphResponse,
   ReplayResponse,
   ReposResponse,
   RetrieveRequest,
@@ -79,6 +80,25 @@ export class AsyncMemoryClient {
     const params = new URLSearchParams({ q, limit: String(limit) });
     return this.get<QnamesResponse>(
       `/repos/${encodeURIComponent(repoId)}/qnames?${params.toString()}`,
+    );
+  }
+
+  /** Whole-repo graph (backend ≥ 4f06ac6). External nodes are excluded
+   *  by default server-side; pass includeExternal to opt in. */
+  getRepoGraph(
+    repoId: string,
+    opts: { includeExternal?: boolean; maxNodes?: number } = {},
+  ): Promise<RepoGraphResponse> {
+    const params = new URLSearchParams();
+    if (opts.includeExternal !== undefined) {
+      params.set("include_external", String(opts.includeExternal));
+    }
+    if (opts.maxNodes !== undefined) {
+      params.set("max_nodes", String(opts.maxNodes));
+    }
+    const qs = params.toString();
+    return this.get<RepoGraphResponse>(
+      `/repos/${encodeURIComponent(repoId)}/graph${qs ? `?${qs}` : ""}`,
     );
   }
 
@@ -251,4 +271,12 @@ export function listRepos(): Promise<ReposResponse> {
 /** Convenience wrapper consumed by QnameInput. */
 export function searchQnames(repoId: string, q: string): Promise<QnamesResponse> {
   return getMemoryClient().searchQnames(repoId, q);
+}
+
+/** Convenience wrapper consumed by the Graph page's whole-repo mode. */
+export function getRepoGraph(
+  repoId: string,
+  opts: { includeExternal?: boolean; maxNodes?: number } = {},
+): Promise<RepoGraphResponse> {
+  return getMemoryClient().getRepoGraph(repoId, opts);
 }
