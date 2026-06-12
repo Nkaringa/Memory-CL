@@ -18,8 +18,6 @@ export default function RetrievePage() {
   const [lastQuery, setLastQuery] = useState<QueryBoxValue | null>(null);
   const mutation = useMutation<RetrieveResponse, Error, QueryBoxValue>({
     mutationFn: async (q) => {
-      // Channel toggles are advisory at the API boundary — Phase-7's
-      // backpressure rules already escalate channels deterministically.
       return getMemoryClient().retrieve({
         text: q.text,
         repo_id: q.repo_id,
@@ -82,11 +80,7 @@ export default function RetrievePage() {
 
       {lastQuery && mutation.data && (
         <div className="mt-4 text-[10px] muted font-mono">
-          last query · top_k={lastQuery.top_k} · channels=
-          {Object.entries(lastQuery.channels)
-            .filter(([, on]) => on)
-            .map(([k]) => k)
-            .join(",") || "none"}
+          last query · top_k={lastQuery.top_k}
         </div>
       )}
     </div>

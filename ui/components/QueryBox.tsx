@@ -10,7 +10,6 @@ export interface QueryBoxValue {
   text: string;
   repo_id: string;
   top_k: number;
-  channels: { vector: boolean; graph: boolean; metadata: boolean };
   seedUnitIds: string[];
   unitKinds: string[];
 }
@@ -44,7 +43,6 @@ export function QueryBox({ defaultValue, onSubmit, pending, className }: QueryBo
       text: text.trim(),
       repo_id: repoId.trim(),
       top_k: topK,
-      channels: { vector: true, graph: true, metadata: true },
       seedUnitIds: seedRaw
         .split(/[\n,]+/)
         .map((s) => s.trim())
@@ -114,7 +112,7 @@ export function QueryBox({ defaultValue, onSubmit, pending, className }: QueryBo
       </div>
 
       <div className="flex items-end">
-        <Button type="submit" size="lg" disabled={pending}>
+        <Button type="submit" size="lg" disabled={pending || !repoId}>
           <Search size={16} />
           {pending ? "Retrieving…" : "Retrieve"}
         </Button>
