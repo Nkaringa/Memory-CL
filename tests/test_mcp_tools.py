@@ -590,6 +590,20 @@ async def test_find_symbol_empty_hints_alternatives() -> None:
     assert "search_code" in resp.data["hint"]
 
 
+@pytest.mark.asyncio
+async def test_find_symbol_truncated_flag_fires_at_limit() -> None:
+    """30 fake matches, limit=10 → truncated=True, exactly 10 returned."""
+    units_30 = [
+        _unit(f"pkg.m.fn{i:02d}", unit_id=f"u{i:02d}") for i in range(30)
+    ]
+    state = _state(routes={"symbol": _symbol_rows(*units_30)})
+    resp = await _run(state, "find_symbol",
+                      {"query": "fn", "repo_id": "acme", "limit": 10})
+    assert resp.status.value == "success"
+    assert resp.data["truncated"] is True
+    assert len(resp.data["matches"]) == 10
+
+
 # ============================================================================
 #                               list_repos
 # ============================================================================

@@ -34,9 +34,10 @@ async def _find_in_repo(
 ) -> list[dict[str, Any]]:
     """Substring qname search, enriched with kind + file:line + unit_id.
 
-    Tool-level SQL (same ILIKE semantics as `search_qnames`) because the
-    repository method doesn't return file/line and v2 hits must be
-    self-contained. Read-only.
+    Fetches `limit + 1` rows so the caller can detect truncation: if
+    the extra row arrives, the result was capped and `truncated` can be
+    set honestly. The extra row is never included in the returned slice.
+    Read-only.
     """
     from sqlalchemy import text
 
@@ -53,7 +54,7 @@ async def _find_in_repo(
             {
                 "repo_id": repo_id,
                 "pattern": f"%{escape_like(query)}%",
-                "limit": limit,
+                "limit": limit + 1,  # fetch one extra to detect truncation
             },
         )
         rows = result.all()
@@ -103,10 +104,13 @@ class FindSymbolTool:
             targets = known
 
         matches: list[dict[str, Any]] = []
+        truncated = False
         for repo in targets:
-            matches.extend(
-                await _find_in_repo(state, repo, request.query, request.limit)
-            )
+            rows = await _find_in_repo(state, repo, request.query, request.limit)
+            if len(rows) > request.limit:
+                truncated = True
+                rows = rows[: request.limit]
+            matches.extend(rows)
         # Deterministic: shortest qname first (canonical units beat
         # deeply nested test paths), then qname, then repo.
         matches.sort(
@@ -116,8 +120,10 @@ class FindSymbolTool:
                 m["repo_id"],
             )
         )
-        truncated = len(matches) > request.limit
-        matches = matches[: request.limit]
+        # After merging across repos, apply the global limit.
+        if len(matches) > request.limit:
+            truncated = True
+            matches = matches[: request.limit]
 
         out: dict[str, Any] = {"matches": matches, "truncated": truncated}
         if not matches:
