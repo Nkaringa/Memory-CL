@@ -33,6 +33,10 @@ router = APIRouter(prefix="/mcp", tags=["mcp"])
 class ToolsListEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
+    description: str = Field(
+        default="",
+        description="Agent-facing usage guidance: when to use this tool",
+    )
     request_schema: str = Field(
         description="Pydantic class name of the tool's request schema",
     )
@@ -142,12 +146,26 @@ async def list_tools(
         tools=[
             ToolsListEntry(
                 name=t.name,
+                description=_tool_description(t),
                 request_schema=t.request_schema.__name__,
                 json_schema=t.request_schema.model_json_schema(),
             )
             for t in registry.all()
         ]
     )
+
+
+def _tool_description(tool: Any) -> str:
+    """Agent-facing description: explicit attribute, else docstring line 1.
+
+    Same precedence as the native MCP transport's `_to_protocol_tool`
+    so both surfaces advertise identical guidance.
+    """
+    explicit = getattr(tool, "description", None)
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    doc = (tool.__class__.__doc__ or "").strip()
+    return doc.splitlines()[0] if doc else ""
 
 
 @router.post(

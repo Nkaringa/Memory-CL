@@ -1,12 +1,10 @@
 """Graph-oriented MCP tools.
 
-`get_related_components(component)`  — neighbors via GraphRetriever
-`query_graph(node, depth)`           — bounded BFS via GraphRetriever
-`get_risks(entity)`                  — heuristic risk projection from
-                                        outgoing edges to EXTERNAL nodes
+`get_risks(entity)` — heuristic structural risk projection (kept in v2).
 
-All three rely solely on `core.retrieval.GraphRetriever` and the
-existing Phase-2 `Neo4jGraphRepository.neighbors` API.
+`query_graph` and `get_related_components` are DEPRECATED v1 aliases:
+they delegate to the v2 `explore` internals so existing sessions keep
+working while new sessions should call `explore` directly.
 """
 
 from __future__ import annotations
@@ -19,133 +17,73 @@ from core.mcp.schemas import (
     GetRisksRequest,
     QueryGraphRequest,
 )
-from core.retrieval import GraphRetriever
-from schemas import RetrievalCandidate
+from core.mcp.tools._helpers import (
+    qname_suggestions,
+    resolve_seed_unit,
+)
+from core.mcp.tools.explore_tool import _explore_impl
 
 
-class _GraphCallMixin:
-    """Run the GraphRetriever with the resolved seed and return candidates.
+def _legacy_candidates(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """v1-shaped candidate dicts derived from v2 neighbors.
 
-    Two seed-resolution forms are supported by the agent surface:
-    a unit_id (used as-is) or a qualified_name (resolved via metadata).
+    Kept so pre-v2 consumers (e.g. the SDK's `query_graph` wrapper,
+    which reads `candidates[].unit_id`) keep working against the
+    deprecated aliases.
     """
-
-    @staticmethod
-    async def _resolve_seeds(
-        state, *, repo_id: str, hint: str
-    ) -> list[str]:
-        # If the hint already looks like a unit_id (64-char hex), trust
-        # it. Otherwise treat as qname and look up via Postgres.
-        if len(hint) == 64 and all(c in "0123456789abcdef" for c in hint):
-            return [hint]
-        return await _seeds_for_qname(state, repo_id=repo_id, qname=hint)
-
-
-async def _seeds_for_qname(state, *, repo_id: str, qname: str) -> list[str]:
-    """Resolve a qname to its unit_id via the canonical Postgres store."""
-    from sqlalchemy import text
-
-    sql = text(
-        "SELECT unit_id FROM ingestion_units "
-        " WHERE repo_id = :repo_id AND qualified_name = :qname LIMIT 1"
-    )
-    async with state.postgres.engine.connect() as conn:
-        result = await conn.execute(sql, {"repo_id": repo_id, "qname": qname})
-        row = result.first()
-    return [row[0]] if row else []
-
-
-class GetRelatedComponentsTool(_GraphCallMixin):
-    """`get_related_components(component, depth?)` — graph neighbors."""
-
-    name: str = "get_related_components"
-    request_schema = GetRelatedComponentsRequest
-
-    async def execute(
-        self, request: GetRelatedComponentsRequest, ctx: ExecutionContext
-    ) -> dict[str, Any]:
-        seeds = await self._resolve_seeds(
-            ctx.state, repo_id=request.repo_id, hint=request.component
-        )
-        if not seeds:
-            return {"component": request.component, "found": False, "related": []}
-
-        retriever = GraphRetriever(ctx.state.graph_repo, max_depth=request.depth)
-        cands = await retriever.search(
-            seeds, query_id=ctx.request_id, repo_id=request.repo_id
-        )
-        # Drop the seed itself from "related" — agents already know it.
-        related = [c for c in cands if c.unit_id not in set(seeds)]
-        return {
-            "component": request.component,
-            "found": True,
-            "depth": request.depth,
-            "related": [_candidate_to_dict(c) for c in related],
+    return [
+        {
+            "unit_id": n.get("node_id"),
+            "qualified_name": n.get("qualified_name"),
+            "kind": n.get("kind"),
+            "file_path": n.get("file_path"),
         }
+        for n in result.get("neighbors", [])
+    ]
 
 
-class QueryGraphTool(_GraphCallMixin):
-    """`query_graph(node, depth?)` — bounded BFS exposing seed + neighbors."""
-
-    name: str = "query_graph"
-    request_schema = QueryGraphRequest
-
-    async def execute(
-        self, request: QueryGraphRequest, ctx: ExecutionContext
-    ) -> dict[str, Any]:
-        seeds = await self._resolve_seeds(
-            ctx.state, repo_id=request.repo_id, hint=request.node
-        )
-        if not seeds:
-            return {"node": request.node, "found": False, "candidates": []}
-
-        retriever = GraphRetriever(ctx.state.graph_repo, max_depth=request.depth)
-        cands = await retriever.search(
-            seeds, query_id=ctx.request_id, repo_id=request.repo_id
-        )
-        edges = await _real_edges_among(
-            ctx.state.graph_repo, [c.unit_id for c in cands]
-        )
-        return {
-            "node": request.node,
-            "found": True,
-            "depth": request.depth,
-            "candidates": [_candidate_to_dict(c) for c in cands],
-            "edges": edges,
-        }
-
-
-class GetRisksTool(_GraphCallMixin):
-    """`get_risks(entity)` — heuristic risks via the existing graph layer.
-
-    Phase-5 risks are STRUCTURAL (semantic risks come in Phase 6+):
-        - external dependencies the entity directly imports/calls
-        - high-degree neighbors that fan out into many EXTERNAL nodes
-
-    The MCP layer adds nothing semantic — it composes Phase-2/4 APIs
-    and reports the resulting node ids.
-    """
+class GetRisksTool:
+    """Structural external-dependency risks for one entity."""
 
     name: str = "get_risks"
+    description: str = (
+        "List the EXTERNAL dependencies (third-party imports/calls) a "
+        "symbol touches directly — a structural risk surface, e.g. "
+        "get_risks(entity='core.embeddings.openai_embedder.OpenAIEmbedder', "
+        "repo_id='memory-cl'). Use when assessing blast radius of a "
+        "change or auditing third-party exposure. Structural only (no "
+        "semantic analysis); for general neighbors use explore. "
+        "Read-only."
+    )
     request_schema = GetRisksRequest
 
     async def execute(
         self, request: GetRisksRequest, ctx: ExecutionContext
     ) -> dict[str, Any]:
-        seeds = await self._resolve_seeds(
-            ctx.state, repo_id=request.repo_id, hint=request.entity
+        seed = await resolve_seed_unit(
+            ctx.state, repo_id=request.repo_id, reference=request.entity
         )
-        if not seeds:
-            return {"entity": request.entity, "found": False, "risks": []}
+        if seed is None:
+            suggestions = await qname_suggestions(
+                ctx.state, request.repo_id, request.entity
+            )
+            return {
+                "entity": request.entity,
+                "found": False,
+                "risks": [],
+                "suggestions": suggestions,
+                "hint": (
+                    "Unknown entity. Closest qualified_names are in "
+                    "`suggestions`; or use find_symbol(query=...)."
+                ),
+            }
 
-        # Pull the immediate 1-hop neighborhood: GraphRetriever's BFS
-        # naturally captures CALLS / IMPORTS / DEFINES depending on
-        # node kind, and it already drops EXTERNAL targets at depth>0.
-        # For risk projection we DO want External targets back — so we
-        # ask the underlying graph repo directly for 1-hop neighbors
-        # without GraphRetriever's EXTERNAL filter.
+        # 1-hop neighborhood straight from the graph repo — we want the
+        # EXTERNAL targets that GraphRetriever's BFS intentionally drops.
         try:
-            neighbors = await ctx.state.graph_repo.neighbors(seeds[0], depth=1)
+            neighbors = await ctx.state.graph_repo.neighbors(
+                seed.unit_id, depth=1
+            )
         except Exception as exc:
             return {
                 "entity": request.entity,
@@ -155,8 +93,11 @@ class GetRisksTool(_GraphCallMixin):
             }
 
         externals = [
-            {"node_id": n.node_id, "qualified_name": n.qualified_name,
-             "kind": n.kind.value}
+            {
+                "node_id": n.node_id,
+                "qualified_name": n.qualified_name,
+                "kind": n.kind.value,
+            }
             for n in sorted(neighbors, key=lambda n: n.node_id)
             if n.kind.value == "External"
         ]
@@ -168,35 +109,68 @@ class GetRisksTool(_GraphCallMixin):
         }
 
 
-async def _real_edges_among(graph_repo: Any, unit_ids: list[str]) -> list[dict[str, Any]]:
-    """REAL edges among the returned nodes — degrades to [] gracefully.
+class GetRelatedComponentsTool:
+    """DEPRECATED alias for `explore`."""
 
-    Older / alternative GraphRepository implementations may not expose
-    `edges_among`; backend failures must never sink the whole response.
-    """
-    edges_among = getattr(graph_repo, "edges_among", None)
-    if edges_among is None:
-        return []
-    try:
-        raw = await edges_among(unit_ids)
-        return [
-            {"src_id": src, "kind": kind, "dst_id": dst}
-            for src, kind, dst in raw
-        ]
-    except Exception:
-        return []
+    name: str = "get_related_components"
+    description: str = (
+        "DEPRECATED — use explore. Equivalent to explore(qualified_name="
+        "<component>, repo_id=..., direction='all'): returns the graph "
+        "neighborhood with content-bearing entries."
+    )
+    request_schema = GetRelatedComponentsRequest
+
+    async def execute(
+        self, request: GetRelatedComponentsRequest, ctx: ExecutionContext
+    ) -> dict[str, Any]:
+        clamped_depth = min(request.depth, 5)
+        result = await _explore_impl(
+            ctx.state,
+            reference=request.component,
+            repo_id=request.repo_id,
+            direction="all",
+            depth=clamped_depth,
+            request_id=ctx.request_id,
+        )
+        result["deprecated"] = "use explore"
+        result["related"] = _legacy_candidates(result)  # v1 key
+        if clamped_depth < request.depth:
+            result["warning"] = (
+                "depth clamped to 5 (v1 compat); use explore for deeper traversal"
+            )
+        return result
 
 
-def _candidate_to_dict(c: RetrievalCandidate) -> dict[str, Any]:
-    return {
-        "unit_id": c.unit_id,
-        "qualified_name": c.qualified_name,
-        "kind": c.kind,
-        "file_path": c.file_path,
-        "raw_score": c.raw_score,
-        "channel": c.channel.value,
-        "depth": c.extra.get("depth"),
-    }
+class QueryGraphTool:
+    """DEPRECATED alias for `explore`."""
+
+    name: str = "query_graph"
+    description: str = (
+        "DEPRECATED — use explore. Equivalent to explore(qualified_name="
+        "<node>, repo_id=..., direction='all', depth=<depth>): returns "
+        "the graph neighborhood plus the real directed edges."
+    )
+    request_schema = QueryGraphRequest
+
+    async def execute(
+        self, request: QueryGraphRequest, ctx: ExecutionContext
+    ) -> dict[str, Any]:
+        clamped_depth = min(request.depth, 5)
+        result = await _explore_impl(
+            ctx.state,
+            reference=request.node,
+            repo_id=request.repo_id,
+            direction="all",
+            depth=clamped_depth,
+            request_id=ctx.request_id,
+        )
+        result["deprecated"] = "use explore"
+        result["candidates"] = _legacy_candidates(result)  # v1 key
+        if clamped_depth < request.depth:
+            result["warning"] = (
+                "depth clamped to 5 (v1 compat); use explore for deeper traversal"
+            )
+        return result
 
 
 __all__ = ["GetRelatedComponentsTool", "GetRisksTool", "QueryGraphTool"]

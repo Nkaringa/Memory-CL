@@ -1,7 +1,8 @@
 """Context-related MCP tools.
 
-`get_context`         — full hybrid retrieval → ContextPacket
-`get_module_summary`  — DenseModule for a module qname
+`get_module_summary`  — DenseModule for a module qname (kept in v2)
+`get_context`         — DEPRECATED alias delegating to the v2
+                        `search_code` internals
 
 Both are orchestration wrappers — they call only Phase 2-4 systems and
 add no new business logic.
@@ -11,77 +12,59 @@ from __future__ import annotations
 
 from typing import Any
 
-from core import get_settings
 from core.mcp.execution.tool_executor import ExecutionContext
 from core.mcp.schemas import GetContextRequest, GetModuleSummaryRequest
-from core.mcp.tools._helpers import (
-    build_assembler,
-    build_hybrid_retriever,
-    build_ranking_model,
-)
+from core.mcp.tools._helpers import hydrate_unit, qname_suggestions
+from core.mcp.tools.search_tool import _search_impl
 from core.summarization import ModuleSummarizer
-from schemas import IngestionUnit, Language, Query, UnitKind
+from schemas import IngestionUnit
 
 
 class GetContextTool:
-    """`get_context(task, scope?)` — runs the full hybrid retrieval path."""
+    """DEPRECATED alias for `search_code`."""
 
     name: str = "get_context"
+    description: str = (
+        "DEPRECATED — use search_code. Equivalent to search_code("
+        "question=<task>, repo_id=..., top_k=...): hybrid retrieval "
+        "whose hits include file:line and code snippets."
+    )
     request_schema = GetContextRequest
 
     async def execute(
         self, request: GetContextRequest, ctx: ExecutionContext
     ) -> dict[str, Any]:
-        settings = get_settings()
-        max_depth = settings.max_graph_traversal_depth
         # `scope` is treated as a soft alias for `repo_id` if the caller
         # supplied one — the explicit `repo_id` always wins.
-        repo_id = request.repo_id or request.scope or ""
-
-        hybrid = build_hybrid_retriever(
-            ctx.state, repo_id=repo_id, max_depth=max_depth
-        )
-        query = Query(
-            text=request.task,
+        repo_id = request.repo_id or request.scope
+        result = await _search_impl(
+            ctx.state,
+            question=request.task,
             repo_id=repo_id,
-            top_k=request.top_k,
-            seed_unit_ids=list(request.seed_unit_ids),
+            top_k=min(request.top_k, 50),
+            request_id=ctx.request_id,
         )
-        result = await hybrid.run(query, query_id=ctx.request_id)
-        ranked = build_ranking_model().rank(
-            result.candidates,
-            top_k=request.top_k,
-            query_id=ctx.request_id,
-            repo_id=repo_id,
-        )
-        packet = build_assembler(
-            max_context_tokens=settings.max_context_tokens
-        ).build(
-            task=request.task,
-            ranked=ranked,
-            query_id=ctx.request_id,
-            repo_id=repo_id,
-        )
-
-        return {
-            "packet": packet.model_dump(mode="json"),
-            "graph_hits": result.graph_hits,
-            "vector_hits": result.vector_hits,
-            "metadata_hits": result.metadata_hits,
-            "ranked_count": len(ranked),
-            "failed_channels": list(result.failed_channels),
-        }
+        result["deprecated"] = "use search_code"
+        return result
 
 
 class GetModuleSummaryTool:
     """`get_module_summary(module)` — DenseModule via Phase-2 + Phase-3 paths.
 
-    Implementation note: we never bypass storage — we read units via
-    the metadata channel + structural data via the graph channel, both
-    of which are existing Phase-2/4 APIs.
+    Implementation note: we never bypass storage — we read units via a
+    read-only projection over `ingestion_units`, NOT a new ingestion
+    pathway.
     """
 
     name: str = "get_module_summary"
+    description: str = (
+        "Get a dense structural summary of one module: its classes, "
+        "functions, imports and doc in a compact machine-readable form, "
+        "e.g. get_module_summary(module='core.retrieval.hybrid_retriever', "
+        "repo_id='memory-cl'). Cheaper than read_file when you only need "
+        "the shape of a module, not its source. For full code use "
+        "read_file/read_unit. Read-only."
+    )
     request_schema = GetModuleSummaryRequest
 
     async def execute(
@@ -94,7 +77,20 @@ class GetModuleSummaryTool:
             ctx.state.postgres.engine, request.repo_id, request.module
         )
         if not units:
-            return {"module": request.module, "found": False, "summary": None}
+            suggestions = await qname_suggestions(
+                ctx.state, request.repo_id, request.module
+            )
+            return {
+                "module": request.module,
+                "found": False,
+                "summary": None,
+                "suggestions": suggestions,
+                "hint": (
+                    "Unknown module. Closest qualified_names are in "
+                    "`suggestions`; module qnames also appear in "
+                    "repo_overview's module_tree."
+                ),
+            }
 
         [summary] = _summarize_module(units, module_qname=request.module)
         return {
@@ -106,7 +102,7 @@ class GetModuleSummaryTool:
 
 
 async def _fetch_module_units(
-    engine, repo_id: str, module_qname: str
+    engine: Any, repo_id: str, module_qname: str
 ) -> list[IngestionUnit]:
     """Read all units belonging to `module_qname` (the module + descendants).
 
@@ -132,43 +128,10 @@ async def _fetch_module_units(
             },
         )
         rows = result.all()
-
-    out: list[IngestionUnit] = []
-    for row in rows:
-        m = row._mapping if hasattr(row, "_mapping") else row
-        out.append(
-            IngestionUnit(
-                unit_id=m["unit_id"],
-                repo_id=m["repo_id"],
-                commit_sha=m["commit_sha"],
-                kind=UnitKind(m["kind"]),
-                name=m["name"],
-                qualified_name=m["qualified_name"],
-                parent_qualified_name=m["parent_qualified_name"],
-                file_path=m["file_path"],
-                language=Language(m["language"]),
-                line_start=m["line_start"],
-                line_end=m["line_end"],
-                content=m["content"],
-                source_sha=m["source_sha"],
-                docstring=m["docstring"],
-                signature=m["signature"],
-                imports=list(m["imports"] or []),
-                calls=list(m["calls"] or []),
-                references=list(m["references"] or []),
-                bases=list(m["bases"] or []),
-                token_count=m["token_count"],
-                schema_version=m["schema_version"],
-                created_at=m["created_at"],
-                updated_at=m["updated_at"],
-                source=m["source"],
-                checksum=m["checksum"],
-            )
-        )
-    return out
+    return [hydrate_unit(row) for row in rows]
 
 
-def _summarize_module(units: list[IngestionUnit], *, module_qname: str):
+def _summarize_module(units: list[IngestionUnit], *, module_qname: str) -> list[Any]:
     summaries = ModuleSummarizer().summarize(units)
     # The summarizer already groups by enclosing module. Filter to the
     # requested qname so a caller asking for `pkg` doesn't get `pkg.utils`.

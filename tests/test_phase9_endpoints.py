@@ -216,7 +216,7 @@ def test_status_returns_full_posture() -> None:
         body = client.get("/status").json()
     assert body["service"] == "memory-cl"
     assert body["environment"] == "development"
-    assert body["mcp_tool_count"] == 7
+    assert body["mcp_tool_count"] == 14  # v2 surface: 7 new + 4 kept + 3 aliases
     assert body["safe_mode"]["enabled"] is False
     assert body["schema_version"] == "1"
     # FeatureFlagRegistry surfaced.

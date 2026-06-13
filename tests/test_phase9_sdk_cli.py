@@ -61,12 +61,54 @@ def _build_fake_api() -> FastAPI:
     @app.post("/mcp/tools/{tool}")
     async def mcp(tool: str, body: dict[str, Any]):
         if tool == "query_graph":
+            node = body["node"]
+            depth = body.get("depth", 1)
             return {
                 "tool": "query_graph",
                 "request_id": "rid",
                 "status": "success",
-                "data": {"node": body["node"], "found": True, "depth": body.get("depth", 1),
-                         "candidates": []},
+                "data": {
+                    "node": node,
+                    "found": True,
+                    "depth": depth,
+                    # v2-alias shape: neighbors + directed edges + seed.
+                    "neighbors": [
+                        {
+                            "node_id": "u-nbr",
+                            "qualified_name": "pkg.m.helper",
+                            "kind": "fn",
+                            "file_path": "pkg/m.py",
+                            "lines": "1-5",
+                            "signature": "def helper()",
+                            "snippet": "def helper():",
+                            "distance": 1,
+                            "relation": "CALLS ->",
+                        }
+                    ],
+                    "edges": [
+                        {"src_id": node, "kind": "CALLS", "dst_id": "u-nbr"}
+                    ],
+                    "seed": {
+                        "qualified_name": node,
+                        "kind": "fn",
+                        "file_path": "pkg/m.py",
+                        "lines": "1-5",
+                        "signature": "def f()",
+                    },
+                    "direction": "all",
+                    "truncated": False,
+                    "truncated_edges": False,
+                    "deprecated": "use explore",
+                    # v1 compat key — what the SDK reads via candidates[].unit_id
+                    "candidates": [
+                        {
+                            "unit_id": "u-nbr",
+                            "qualified_name": "pkg.m.helper",
+                            "kind": "fn",
+                            "file_path": "pkg/m.py",
+                        }
+                    ],
+                },
                 "latency_ms": 0.0,
                 "schema_version": "1",
             }
@@ -165,6 +207,9 @@ async def test_sdk_query_graph_unwraps_mcp_tool_response(
         res = await c.query_graph(node="pkg.m.f", repo_id="acme", depth=2)
     assert res.found
     assert res.depth == 2
+    # v1 compat: SDK can read candidates[].unit_id.
+    assert len(res.candidates) == 1
+    assert res.candidates[0]["unit_id"] == "u-nbr"
 
 
 @pytest.mark.asyncio

@@ -89,6 +89,40 @@ def test_list_tools_exposes_json_schema_for_default_registry() -> None:
     assert schema["properties"]["depth"]["default"] == 1
 
 
+def test_list_tools_exposes_agent_facing_descriptions() -> None:
+    """Every v2 tool ships a non-trivial description over HTTP, and the
+    deprecated aliases announce their replacement up front."""
+    from apps.mcp.registry import build_default_registry
+
+    app = _make_app(registry=build_default_registry())
+    with TestClient(app) as client:
+        resp = client.get("/mcp/tools")
+    by_name = {t["name"]: t for t in resp.json()["tools"]}
+
+    assert {"search_code", "read_unit", "read_file", "explore",
+            "find_symbol", "list_repos", "repo_overview"} <= set(by_name)
+    for entry in by_name.values():
+        assert len(entry["description"]) > 60, entry["name"]
+    assert by_name["query_graph"]["description"].startswith(
+        "DEPRECATED — use explore"
+    )
+    assert by_name["get_context"]["description"].startswith(
+        "DEPRECATED — use search_code"
+    )
+
+
+def test_list_tools_falls_back_to_docstring_for_untyped_tools() -> None:
+    """Tools without an explicit `description` attribute (e.g. test
+    fakes) still list cleanly using their class docstring."""
+    r = ToolRegistry()
+    r.register(_EchoTool())
+    app = _make_app(registry=r)
+    with TestClient(app) as client:
+        resp = client.get("/mcp/tools")
+    (entry,) = resp.json()["tools"]
+    assert entry["description"] == ""  # _EchoTool has no docstring either
+
+
 # ---- /mcp/tools/{tool} success path --------------------------------------
 def test_invoke_tool_success() -> None:
     r = ToolRegistry()

@@ -90,6 +90,33 @@ def test_native_list_tools_advertises_each_registered_tool() -> None:
     # The Pydantic-derived schema MUST advertise the required field.
     properties = tool.inputSchema.get("properties") or {}
     assert "msg" in properties
+    # No explicit `description` attribute → docstring first line is used.
+    assert tool.description == "Echoes the request's `msg` field back inside the response data."
+
+
+def test_native_list_tools_prefers_explicit_descriptions() -> None:
+    """The default registry's v2 tools advertise their agent-facing
+    `description` attribute on the MCP wire — same precedence as the
+    REST listing, so both transports teach the agent identically."""
+    from apps.mcp.native_server import _handle_list_tools
+    from apps.mcp.registry import build_default_registry
+
+    tools = asyncio.run(_handle_list_tools(build_default_registry()))
+    by_name = {t.name: t for t in tools}
+
+    assert {"search_code", "read_unit", "read_file", "explore",
+            "find_symbol", "list_repos", "repo_overview"} <= set(by_name)
+    for tool in tools:
+        assert tool.description and len(tool.description) > 60, tool.name
+    assert by_name["query_graph"].description.startswith(
+        "DEPRECATED — use explore"
+    )
+    assert by_name["get_context"].description.startswith(
+        "DEPRECATED — use search_code"
+    )
+    # Param descriptions ride along in the JSON Schema.
+    sc_props = by_name["search_code"].inputSchema["properties"]
+    assert "description" in sc_props["question"]
 
 
 # ---------------------------------------------------------------------------
