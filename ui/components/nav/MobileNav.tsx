@@ -80,7 +80,7 @@ export function MobileNav() {
           <div className="leading-tight">
             <div className="text-sm font-semibold">Memory-CL</div>
             <div className="text-[10px] muted font-mono uppercase tracking-wider">
-              transparency layer
+              command center
             </div>
           </div>
         </Link>
@@ -119,7 +119,7 @@ export function MobileNav() {
                 <div className="leading-tight">
                   <div className="text-sm font-semibold">Memory-CL</div>
                   <div className="text-[10px] muted font-mono uppercase tracking-wider">
-                    transparency layer
+                    command center
                   </div>
                 </div>
               </Link>
