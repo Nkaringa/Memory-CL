@@ -1,13 +1,15 @@
 import {
-  Activity,
-  Boxes,
-  Database,
-  GitGraph,
-  ScrollText,
-  ShieldCheck,
+  LayoutDashboard,
   Sparkles,
-  Terminal,
-  Workflow,
+  Network,
+  FileCode2,
+  Activity,
+  BarChart3,
+  HeartPulse,
+  Boxes,
+  PlugZap,
+  Camera,
+  Settings,
 } from "lucide-react";
 
 /** Single source of truth for app navigation.
@@ -16,15 +18,16 @@ import {
  *    - Sidebar        (desktop, grouped)
  *    - MobileNav      (below `md`, grouped drawer)
  *    - CommandPalette (flat list + `g <key>` chords)
+ *
+ *  Task-first IA (the command-center redesign): groups map to what you DO —
+ *  Explore the code, Monitor the running system, Operate it.
  */
 export interface NavItem {
   href: string;
   label: string;
   Icon: typeof Activity;
   hint: string;
-  /** `g <key>` chord used by the command palette. */
   shortcut: string;
-  /** Palette-specific copy overrides (the palette predates the grouped sidebar). */
   paletteLabel?: string;
   paletteHint?: string;
 }
@@ -34,45 +37,40 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-/** Dashboard sits ABOVE the groups as the always-on home; it's not a
- *  "Core" page — it's the launching pad.
- */
+/** Command Center sits ABOVE the groups as the always-on cockpit home. */
 export const HOME_ITEM: NavItem = {
-  href: "/dashboard",
-  label: "Dashboard",
-  Icon: Activity,
-  hint: "system pulse",
-  shortcut: "g d",
+  href: "/",
+  label: "Command Center",
+  Icon: LayoutDashboard,
+  hint: "system cockpit",
+  shortcut: "g h",
+  paletteHint: "live cockpit",
 };
 
-/** Information architecture per Phase-10 polish spec.
- *
- *    Core      — what an agent / engineer reaches for first
- *    System    — operational + audit surfaces
- *    Dev Tools — registry + ad-hoc tool runner
- */
 export const NAV_GROUPS: NavGroup[] = [
   {
-    label: "Core",
+    label: "Explore",
     items: [
-      { href: "/retrieve",  label: "Retrieve",  Icon: Sparkles,  hint: "hybrid + ranked", shortcut: "g r", paletteHint: "primary surface" },
-      { href: "/graph",     label: "Graph",     Icon: GitGraph,  hint: "BFS explorer",    shortcut: "g g" },
-      { href: "/ingest",    label: "Ingest",    Icon: Boxes,     hint: "repo intake",     shortcut: "g i" },
+      { href: "/ask",   label: "Ask your code", Icon: Sparkles,  hint: "hybrid search", shortcut: "g a", paletteLabel: "Ask your code" },
+      { href: "/graph", label: "Graph",         Icon: Network,   hint: "map + trace",   shortcut: "g g" },
+      { href: "/read",  label: "Read",          Icon: FileCode2, hint: "code browser",  shortcut: "g r" },
     ],
   },
   {
-    label: "System",
+    label: "Monitor",
     items: [
-      { href: "/status",    label: "Status",    Icon: ShieldCheck, hint: "boot + flags",  shortcut: "g t" },
-      { href: "/audit",     label: "Audit",     Icon: ScrollText,  hint: "hash chain",    shortcut: "g a" },
-      { href: "/snapshot",  label: "Snapshot",  Icon: Database,    hint: "replay engine", shortcut: "g s", paletteHint: "deterministic state" },
+      { href: "/activity", label: "Live Activity", Icon: Activity,   hint: "agent feed",      shortcut: "g l", paletteHint: "agent tool-call feed" },
+      { href: "/metrics",  label: "Metrics",       Icon: BarChart3,  hint: "latency + usage", shortcut: "g m" },
+      { href: "/health",   label: "Health",        Icon: HeartPulse, hint: "components",      shortcut: "g t" },
     ],
   },
   {
-    label: "Dev Tools",
+    label: "Operate",
     items: [
-      { href: "/mcp",         label: "MCP",         Icon: Workflow, hint: "tool registry", shortcut: "g m", paletteLabel: "MCP Tools" },
-      { href: "/tool-runner", label: "Tool Runner", Icon: Terminal, hint: "ad-hoc invoke", shortcut: "g k" },
+      { href: "/repositories", label: "Repositories", Icon: Boxes,    hint: "manage + ingest",  shortcut: "g p", paletteLabel: "Repositories" },
+      { href: "/agents",       label: "Agents",       Icon: PlugZap,  hint: "connect + tools",  shortcut: "g c" },
+      { href: "/snapshots",    label: "Snapshots",    Icon: Camera,   hint: "capture + replay", shortcut: "g s" },
+      { href: "/settings",     label: "Settings",     Icon: Settings, hint: "weights + server", shortcut: "g e" },
     ],
   },
 ];
