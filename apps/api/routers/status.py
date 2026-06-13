@@ -84,6 +84,15 @@ async def status_summary(
     flags = getattr(app_state, "feature_flags", None)
     boot = getattr(app_state, "boot_outcome", None)
     registry = getattr(app_state, "mcp_registry", None)
+    # Resolve embeddings from RuntimeConfig (Postgres-over-env) so the
+    # status reflects a key/mode set at runtime — including local mode,
+    # which enables embeddings with no OpenAI key. Falls back to env when
+    # the runtime config isn't attached (test apps without lifespan).
+    runtime = getattr(app_state, "runtime_config", None)
+    embeddings_enabled = (
+        runtime.embeddings_enabled() if runtime is not None
+        else settings.embeddings_enabled
+    )
     _ = state  # AppState (storage clients) — not used here, but kept
                # in the signature so the dependency wiring stays uniform
 
@@ -115,7 +124,7 @@ async def status_summary(
         ],
         mcp_tool_count=len(registry.names()) if registry else 0,
         schema_version=SCHEMA_VERSION,
-        embeddings_enabled=settings.embeddings_enabled,
+        embeddings_enabled=embeddings_enabled,
         feature_weights=FeatureWeightsView(
             semantic=FEATURE_WEIGHTS.semantic,
             graph=FEATURE_WEIGHTS.graph,
