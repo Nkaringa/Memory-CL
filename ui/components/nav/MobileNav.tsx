@@ -156,7 +156,7 @@ export function MobileNav() {
             </nav>
 
             <footer className="space-y-2 border-t border-border px-4 py-3">
-              <Link href="/status" className="block">
+              <Link href="/health" className="block">
                 <PostureBadge posture={posture} size="sm" className="w-full justify-center" />
               </Link>
               <div className="text-[10px] font-mono muted text-center">v0.1</div>
