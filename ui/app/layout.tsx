@@ -4,25 +4,28 @@ import { Providers } from "@/app/providers";
 import { Sidebar } from "@/components/nav/Sidebar";
 import { MobileNav } from "@/components/nav/MobileNav";
 import { CommandPalette } from "@/components/nav/CommandPalette";
+import { StatusStrip } from "@/components/shell/StatusStrip";
 import "@/app/globals.css";
 
 export const metadata: Metadata = {
-  title: "Memory-CL · transparency layer",
-  description:
-    "Cognitive interface over a deterministic AI memory + retrieval engine.",
+  title: "Memory-CL · Command Center",
+  description: "Command center over a deterministic AI memory + retrieval engine.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <body className="min-h-screen bg-bg text-fg">
         <Providers>
           <MobileNav />
           <div className="flex min-h-screen">
             <Sidebar />
-            {/* pt-20 below md clears the fixed h-14 mobile top bar (+1.5rem gap,
-                matching the desktop py-6 rhythm). */}
-            <main className="flex-1 min-w-0 px-6 pb-6 pt-20 md:pt-6">{children}</main>
+            <div className="flex min-w-0 flex-1 flex-col">
+              <div className="hidden md:block">
+                <StatusStrip />
+              </div>
+              <main className="min-w-0 flex-1 px-6 pb-12 pt-16 md:pt-5">{children}</main>
+            </div>
           </div>
           <CommandPalette />
         </Providers>

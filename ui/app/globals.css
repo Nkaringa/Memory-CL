@@ -2,47 +2,43 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Engineering-grade dark theme. Light mode is intentionally not the
-   default — Memory-CL UI is meant for transparency over a deterministic
-   engine; high-contrast monospace + dim chrome is the right register.  */
+/* Clean light / minimal theme. Memory-CL's UI is a command center over a
+   deterministic engine: calm surface, restrained emerald accent, generous
+   whitespace, monospace only where it carries meaning (code, qnames). */
 :root {
-  --bg: 13 17 23;
-  --panel: 22 27 34;
-  --fg: 230 234 240;
-  --muted: 139 148 158;
-  --border: 48 54 61;
-  --accent: 88 166 255;
-  --ok: 63 185 80;
-  --warn: 240 162 76;
-  --bad: 248 81 73;
+  --bg: 255 255 255;
+  --panel: 251 251 250;
+  --panel2: 246 246 244;
+  --fg: 29 29 27;
+  --muted: 144 144 139;
+  --muted2: 98 98 94;
+  --border: 236 236 236;
+  --border2: 224 224 223;
+  --accent: 14 159 110;       /* emerald */
+  --accent-soft: 231 247 240;
+  --accent-ink: 6 122 82;
+  --ok: 14 159 110;
+  --warn: 199 119 0;
+  --warn-soft: 255 247 234;
+  --bad: 220 38 38;
 }
 
 html, body { height: 100%; }
 body {
   @apply bg-bg text-fg antialiased;
-  font-feature-settings: "ss01", "cv02", "cv11";
 }
 
-::selection { background: rgba(88, 166, 255, 0.25); }
+::selection { background: rgba(14, 159, 110, 0.16); }
 
-/* Scrollbar — minimal but visible in dark mode. */
-*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
 *::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb {
-  background: rgb(var(--border));
-  border-radius: 4px;
-}
+*::-webkit-scrollbar-thumb { background: rgb(var(--border2)); border-radius: 5px; }
+*::-webkit-scrollbar-thumb:hover { background: rgb(var(--muted)); }
 
-/* Code regions — used by Monaco fallbacks + JSON dumps. */
 .mono { font-family: theme("fontFamily.mono"); }
 .muted { color: rgb(var(--muted)); }
 
-/* Pipeline-step pulse for the live trace viewer. */
-@keyframes pulse-step {
-  0% { background-color: rgb(var(--accent) / 0.1); }
-  50% { background-color: rgb(var(--accent) / 0.3); }
-  100% { background-color: rgb(var(--accent) / 0.1); }
-}
-.pipeline-step-active {
-  animation: pulse-step 1.4s ease-in-out infinite;
-}
+/* Live pulse — the "system is alive" blink used on LIVE badges + running rows. */
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+.animate-blink { animation: blink 1.6s ease-in-out infinite; }
+.animate-blink-fast { animation: blink 1.2s ease-in-out infinite; }
