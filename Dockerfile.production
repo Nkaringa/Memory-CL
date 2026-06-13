@@ -88,6 +88,18 @@ RUN apt-get update \
 RUN groupadd --system --gid 1000 memcl \
  && useradd --system --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin memcl
 
+# Local-embedding model cache. The runtime container is read-only, so
+# fastembed (and the huggingface_hub downloader it uses) MUST write the
+# ~130 MB bge model to a writable location. We point both at
+# /home/memcl/.cache and mount a named volume there in compose so the
+# download survives container recreates instead of re-pulling each boot.
+# The dir is created owned by memcl so Docker initializes the named volume
+# with memcl ownership (uid 1000 can then write despite the read-only root).
+RUN mkdir -p /home/memcl/.cache/fastembed /home/memcl/.cache/huggingface \
+ && chown -R memcl:memcl /home/memcl/.cache
+ENV FASTEMBED_CACHE_PATH=/home/memcl/.cache/fastembed \
+    HF_HOME=/home/memcl/.cache/huggingface
+
 WORKDIR /app
 
 # Bring wheels over from the builder and install every wheel that was
