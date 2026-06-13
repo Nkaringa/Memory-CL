@@ -114,6 +114,15 @@ export interface RetrieveResponse {
   latency_ms: number;
 }
 
+/** explore() direction enum — mirrors the backend ExploreDirection literal. */
+export type ExploreDirection =
+  | "callers"
+  | "callees"
+  | "imports"
+  | "imported_by"
+  | "inherits"
+  | "all";
+
 // ---- Graph (query_graph tool) ---------------------------------------------
 export interface GraphQueryCandidate {
   unit_id: string;

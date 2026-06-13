@@ -132,8 +132,9 @@ export function GraphViewer({
       {
         selector: "node[depth = 0]",
         style: {
-          "background-color": "#58a6ff",
-          "border-color": "#58a6ff",
+          "background-color": "#0e9f6e",
+          "border-color": "#067a52",
+          color: "#ffffff",
           width: 26,
           height: 26,
           "z-index": 100 as never,

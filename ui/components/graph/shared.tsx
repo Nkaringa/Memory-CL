@@ -18,16 +18,17 @@ import { Crosshair, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 
-// Edge colors by relationship kind — same GitHub-dark tokens the node
-// styles use (#58a6ff accent, #30363d border, #7d8590 muted).
-export const EDGE_COLOR_DEFAULT = "#30363d";
+// Edge colors by relationship kind — light-theme tokens (emerald accent
+// for the semantically interesting CALLS edges, muted grays for structural
+// ones) so the graph reads correctly on the white command-center canvas.
+export const EDGE_COLOR_DEFAULT = "#d4d4d2";
 export const EDGE_COLORS: Record<string, string> = {
-  CALLS: "#539bf5",    // accent-ish blue — the interesting edges
-  IMPORTS: "#5b7da6",  // muted blue
-  DEFINES: "#3d444d",  // faint gray, barely above the border tone
-  CONTAINS: "#3d444d", // faint gray — structural, not semantic
-  INHERITS: "#a371f7", // purple-ish — type hierarchy
-  REFERENCES: "#3d444d", // faint gray, same as DEFINES/CONTAINS
+  CALLS: "#0e9f6e",    // emerald accent — the interesting edges
+  IMPORTS: "#7aa2c4",  // muted blue
+  DEFINES: "#d0d0ce",  // faint gray, barely above the border tone
+  CONTAINS: "#d0d0ce", // faint gray — structural, not semantic
+  INHERITS: "#9b6ef0", // violet — type hierarchy
+  REFERENCES: "#d0d0ce", // faint gray, same as DEFINES/CONTAINS
 };
 
 /** Last path segment of a qualified name, capped for canvas legibility.
@@ -66,11 +67,11 @@ export function baseGraphStyles({ externalDimmed }: { externalDimmed: boolean })
     {
       selector: "node",
       style: {
-        "background-color": "#161b22",
-        "border-width": 1,
-        "border-color": "#30363d",
+        "background-color": "#ffffff",
+        "border-width": 1.5,
+        "border-color": "#0e9f6e",
         label: "data(label)",
-        color: "#e6eaf0",
+        color: "#1d1d1b",
         "font-size": 10,
         "font-family": "ui-monospace, monospace",
         "text-valign": "bottom",
@@ -89,18 +90,18 @@ export function baseGraphStyles({ externalDimmed }: { externalDimmed: boolean })
         width: 24,
         height: 24,
         "border-width": 2,
-        "border-color": "#6e7681",
-        "background-color": "#1c2128",
+        "border-color": "#90908b",
+        "background-color": "#f6f6f4",
       },
     },
     {
       selector: "node[?isExternal]",
       style: {
-        opacity: externalDimmed ? 0.32 : 0.85,
-        "background-color": "#30363d",
+        opacity: externalDimmed ? 0.4 : 0.9,
+        "background-color": "#f6f6f4",
         "border-style": "dashed",
-        "border-color": "#484f58",
-        color: "#7d8590",
+        "border-color": "#c4c4c2",
+        color: "#90908b",
       },
     },
     {
@@ -129,10 +130,10 @@ export const selectionGraphStyles: StylesheetJson = [
       label: "data(label)",
       "font-size": 8,
       "font-family": "ui-monospace, monospace",
-      color: "#7d8590",
+      color: "#62625e",
       "text-rotation": "autorotate",
-      "text-background-color": "#161b22",
-      "text-background-opacity": 0.85,
+      "text-background-color": "#ffffff",
+      "text-background-opacity": 0.92,
       "text-background-padding": "2px",
     },
   },
@@ -145,8 +146,8 @@ export const selectionGraphStyles: StylesheetJson = [
   {
     selector: "node:selected",
     style: {
-      "border-color": "#58a6ff",
-      "border-width": 2.5,
+      "border-color": "#067a52",
+      "border-width": 3,
     },
   },
 ];
