@@ -81,6 +81,26 @@ async def test_ensure_collection_rejects_invalid_size() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recreate_collection_drops_then_creates_at_new_size() -> None:
+    # Mode switch: the collection must be dropped (old dim) and recreated
+    # at the new dimension, with the size cache refreshed.
+    client = AsyncMock()
+    repo = QdrantVectorRepository(client=client)
+    repo._size_cache["repo_r1"] = 1536  # stale size from the previous mode
+    await repo.recreate_collection("repo_r1", vector_size=384)
+    client.delete_collection.assert_awaited_once()
+    client.create_collection.assert_awaited_once()
+    assert repo._size_cache["repo_r1"] == 384
+
+
+@pytest.mark.asyncio
+async def test_recreate_collection_rejects_invalid_size() -> None:
+    repo = QdrantVectorRepository(client=AsyncMock())
+    with pytest.raises(ValueError):
+        await repo.recreate_collection("c", vector_size=0)
+
+
+@pytest.mark.asyncio
 async def test_upsert_payloads_uses_placeholder_vector_and_sorts_input() -> None:
     client = AsyncMock()
     client.collection_exists = AsyncMock(return_value=False)

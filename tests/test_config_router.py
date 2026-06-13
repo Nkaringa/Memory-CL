@@ -17,10 +17,29 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from apps.api.dependencies import get_app_state
 from apps.api.routers import config as config_router
 from core.config import Settings, get_settings
 from core.config_runtime import RuntimeConfig
 from storage.app_config_repo import AppConfigRow
+
+
+class _FakeUnitsRepo:
+    """Minimal units-repo stand-in for the mode-change reindex loop."""
+
+    def __init__(self, repo_ids: tuple[str, ...] = ()) -> None:
+        self._repo_ids = repo_ids
+
+    async def list_repos(self) -> list[object]:
+        return [type("S", (), {"repo_id": rid})() for rid in self._repo_ids]
+
+
+class _FakeState:
+    """Duck-typed AppState for the config router (only units_repo is read,
+    via the get_app_state override which bypasses the isinstance check)."""
+
+    def __init__(self, repo_ids: tuple[str, ...] = ()) -> None:
+        self.units_repo = _FakeUnitsRepo(repo_ids)
 
 
 class _FakeAppConfigRepo:
@@ -63,7 +82,7 @@ def _clear_settings_cache():
     get_settings.cache_clear()
 
 
-def _make_app(repo: _FakeAppConfigRepo) -> FastAPI:
+def _make_app(repo: _FakeAppConfigRepo, state: _FakeState | None = None) -> FastAPI:
     @asynccontextmanager
     async def _ls(app: FastAPI):
         rc = RuntimeConfig(repo, Settings())  # type: ignore[arg-type]
@@ -73,6 +92,9 @@ def _make_app(repo: _FakeAppConfigRepo) -> FastAPI:
 
     app = FastAPI(lifespan=_ls)
     app.include_router(config_router.router)
+    # The mode-change endpoint depends on AppState (to enumerate repos for
+    # reindex). Override the strict accessor with a duck-typed fake.
+    app.dependency_overrides[get_app_state] = lambda: state or _FakeState()
     return app
 
 
@@ -206,7 +228,9 @@ def test_clear_openai_key_with_null() -> None:
 # ---------------------------------------------------------------------------
 # embedding-mode + complete-onboarding
 # ---------------------------------------------------------------------------
-def test_set_embedding_mode_validates_and_persists() -> None:
+def test_set_embedding_mode_validates_and_persists(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Stub the heavy reindex so the test doesn't load a model.
+    monkeypatch.setattr(config_router, "reindex_repo", _stub_reindex(()))
     app = _make_app(_FakeAppConfigRepo(None))
     with TestClient(app) as client:
         assert client.post(
@@ -216,6 +240,56 @@ def test_set_embedding_mode_validates_and_persists() -> None:
             "/config/embedding-mode", json={"mode": "local"}
         ).status_code == 200
         assert client.get("/config").json()["embedding_mode"] == "local"
+
+
+def _stub_reindex(calls: list | tuple):
+    """Build a fake reindex_repo that records repo_ids and returns a
+    fixed per-repo embed count."""
+    recorded = calls if isinstance(calls, list) else []
+
+    async def _fake(state, settings, runtime, repo_id, *, recreate):  # type: ignore[no-untyped-def]
+        recorded.append((repo_id, recreate))
+        from apps.api.embedding_runtime import ReindexResult
+
+        return ReindexResult(repo_id, units_total=10, units_embedded=10, failed_batches=0)
+
+    return _fake
+
+
+def test_set_embedding_mode_reindexes_each_repo_on_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list = []
+    monkeypatch.setattr(config_router, "reindex_repo", _stub_reindex(calls))
+    state = _FakeState(repo_ids=("repo-a", "repo-b"))
+    app = _make_app(_FakeAppConfigRepo(None), state)  # starts openai
+    with TestClient(app) as client:
+        resp = client.post("/config/embedding-mode", json={"mode": "local"})
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["reindexed"] is True
+    assert body["repos_reindexed"] == 2
+    assert body["units_embedded"] == 20
+    # Each repo was recreated at the new dimension.
+    assert {c[0] for c in calls} == {"repo-a", "repo-b"}
+    assert all(c[1] is True for c in calls)
+
+
+def test_set_embedding_mode_noop_when_unchanged_skips_reindex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list = []
+    monkeypatch.setattr(config_router, "reindex_repo", _stub_reindex(calls))
+    state = _FakeState(repo_ids=("repo-a",))
+    # Already openai (default) → requesting openai is a no-op.
+    app = _make_app(_FakeAppConfigRepo(None), state)
+    with TestClient(app) as client:
+        resp = client.post("/config/embedding-mode", json={"mode": "openai"})
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["reindexed"] is False
+    assert body["repos_reindexed"] == 0
+    assert calls == []  # reindex never invoked
 
 
 def test_complete_onboarding_sets_flag() -> None:

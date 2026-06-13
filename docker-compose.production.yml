@@ -52,6 +52,12 @@ services:
       # with `memcl ingest /repos/<name> --repo-id <name>`. Read-only
       # so the api can never accidentally mutate source.
       - ${MEMCL_REPOS_HOST_DIR:-/home/memcl/repos}:/repos:ro
+      # Persistent cache for the on-device embedding model (local mode).
+      # The root fs is read-only; this named volume is the one writable
+      # spot fastembed/huggingface download the ~130 MB model into, so a
+      # container recreate doesn't re-download it. See Dockerfile env
+      # FASTEMBED_CACHE_PATH / HF_HOME.
+      - memcl-model-cache:/home/memcl/.cache
     depends_on:
       postgres: { condition: service_healthy }
       qdrant:   { condition: service_started }
@@ -228,3 +234,5 @@ volumes:
   qdrant-prod-data:
   neo4j-prod-data:
   redis-prod-data:
+  # On-device embedding model cache (local mode). Survives api recreates.
+  memcl-model-cache:

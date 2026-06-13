@@ -112,6 +112,27 @@ class QdrantVectorRepository:
             )
             self._size_cache[name] = vector_size
 
+    async def recreate_collection(self, name: str, vector_size: int) -> None:
+        """Drop + recreate the collection empty at `vector_size`.
+
+        Qdrant can't resize a collection in place, so an embedding-
+        dimension change (mode switch) requires dropping the old-dimension
+        points and recreating. `delete_collection` is a no-op when the
+        collection is absent. The size cache is refreshed so the next
+        placeholder vector matches.
+        """
+        if vector_size <= 0:
+            raise ValueError("vector_size must be > 0")
+        with _tracer.start_as_current_span("qdrant_repo.recreate_collection") as span:
+            span.set_attribute("collection", name)
+            span.set_attribute("vector_size", vector_size)
+            await self._client.delete_collection(collection_name=name)
+            await self._client.create_collection(
+                collection_name=name,
+                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+            )
+            self._size_cache[name] = vector_size
+
     # ----- Writes -----
     async def upsert_payload(self, collection: str, point: VectorPoint) -> None:
         await self.upsert_payloads(collection, [point])

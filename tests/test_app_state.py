@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock
 from apps.api.lifespan import _build_query_embedder, _build_state, _close_embedder
 from core.config import Settings
 from core.config_runtime import RuntimeConfig
-from core.embeddings import DeterministicEmbedder, OpenAIEmbedder
+from core.embeddings import DeterministicEmbedder, LocalEmbedder, OpenAIEmbedder
 from storage.app_config_repo import AppConfigRow
 
 
@@ -64,12 +64,13 @@ async def test_query_embedder_none_when_disabled() -> None:
     assert _build_query_embedder(rc) is None
 
 
-async def test_query_embedder_none_for_local_mode_phase2() -> None:
-    """'local' mode is Phase 2 — no embedder is built even if a key exists."""
-    rc = await _runtime(
-        _row(openai_api_key="sk-x", embedding_mode="local"), Settings()
-    )
-    assert _build_query_embedder(rc) is None
+async def test_query_embedder_is_local_for_local_mode() -> None:
+    """'local' mode builds the on-device embedder (384-dim) regardless of
+    whether an OpenAI key is present — it needs no key."""
+    rc = await _runtime(_row(embedding_mode="local"), Settings(openai_api_key=None))
+    embedder = _build_query_embedder(rc)
+    assert isinstance(embedder, LocalEmbedder)
+    assert embedder.dimension == 384
 
 
 def test_build_state_returns_deterministic_placeholder_embedder() -> None:

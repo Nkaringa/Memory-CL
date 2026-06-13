@@ -253,7 +253,8 @@ function AccessKeysPanel() {
             <button
               type="button"
               onClick={() => setMode.mutate("openai")}
-              className={`rounded-lg border px-3 py-[7px] text-[13px] font-medium transition-colors ${
+              disabled={setMode.isPending}
+              className={`rounded-lg border px-3 py-[7px] text-[13px] font-medium transition-colors disabled:opacity-50 ${
                 cfg?.embedding_mode === "openai"
                   ? "border-accent bg-accentSoft text-accentInk"
                   : "border-border2 bg-bg text-muted2 hover:border-muted hover:text-fg"
@@ -263,12 +264,32 @@ function AccessKeysPanel() {
             </button>
             <button
               type="button"
-              disabled
-              className="cursor-not-allowed rounded-lg border border-border bg-panel px-3 py-[7px] text-[13px] font-medium text-muted opacity-60"
+              onClick={() => setMode.mutate("local")}
+              disabled={setMode.isPending}
+              className={`rounded-lg border px-3 py-[7px] text-[13px] font-medium transition-colors disabled:opacity-50 ${
+                cfg?.embedding_mode === "local"
+                  ? "border-accent bg-accentSoft text-accentInk"
+                  : "border-border2 bg-bg text-muted2 hover:border-muted hover:text-fg"
+              }`}
             >
-              Local · Phase 2
+              Local
             </button>
           </div>
+          <div className="mt-2 text-[12px] text-muted">
+            {setMode.isPending
+              ? "Switching mode and re-indexing every repository — this can take a moment…"
+              : "Switching mode rebuilds every repo's vectors at the new dimension (OpenAI 1536 · Local 384) and re-embeds them."}
+          </div>
+          {setMode.data?.reindexed ? (
+            <div className="mt-2 text-[12px] font-medium text-accentInk">
+              Re-indexed {setMode.data.repos_reindexed} repo
+              {setMode.data.repos_reindexed === 1 ? "" : "s"} ·{" "}
+              {setMode.data.units_embedded.toLocaleString()} units re-embedded
+              {setMode.data.failed_batches > 0
+                ? ` · ${setMode.data.failed_batches} batch(es) failed`
+                : ""}
+            </div>
+          ) : null}
           {setMode.isError ? (
             <div className="mt-2 text-[12px] text-bad">Could not change the mode.</div>
           ) : null}

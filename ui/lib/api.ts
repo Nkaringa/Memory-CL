@@ -11,6 +11,7 @@ import type {
   AuditTailResponse,
   AuditVerifyResponse,
   EmbeddingMode,
+  EmbeddingModeResult,
   McpKeyResponse,
   IngestRequest,
   IngestResponse,
@@ -192,8 +193,11 @@ export class AsyncMemoryClient {
     return this.post<unknown>("/config/openai-key", { api_key: apiKey });
   }
 
-  setEmbeddingMode(mode: EmbeddingMode): Promise<unknown> {
-    return this.post<unknown>("/config/embedding-mode", { mode });
+  /** Switch embedding mode. On an actual change the backend rebuilds every
+   *  repo's collection at the new dimension and re-embeds — the returned
+   *  counts report that re-index. */
+  setEmbeddingMode(mode: EmbeddingMode): Promise<EmbeddingModeResult> {
+    return this.post<EmbeddingModeResult>("/config/embedding-mode", { mode });
   }
 
   completeOnboarding(): Promise<unknown> {

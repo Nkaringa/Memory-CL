@@ -6,6 +6,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI
 
+from apps.api.embedding_runtime import build_runtime_embedder
 from apps.api.state import AppState
 from core import (
     configure_logging,
@@ -16,7 +17,7 @@ from core import (
 )
 from core.config import Settings
 from core.config_runtime import RuntimeConfig
-from core.embeddings import Embedder, OpenAIEmbedder
+from core.embeddings import Embedder
 from storage import (
     AppConfigRepository,
     Neo4jClient,
@@ -34,31 +35,16 @@ _log = get_logger(__name__)
 def _build_query_embedder(runtime: RuntimeConfig) -> Embedder | None:
     """Query-side embedder matching the document-side (ingest) embedder.
 
-    Phase-3 ingestion embeds documents with `OpenAIEmbedder` whenever
-    embeddings are enabled — query vectors must come from the SAME model
-    or cosine scores against the stored vectors are noise. Returns None
-    when embeddings are disabled so `AppState.with_default_embedder`
-    falls back to the deterministic embedder.
+    Query vectors MUST come from the same model the documents were embedded
+    with or cosine scores against the stored vectors are noise. Both sides
+    construct through `build_runtime_embedder`, so they can't diverge.
+    Returns None when embeddings are disabled so
+    `AppState.with_default_embedder` falls back to the deterministic one.
 
-    Reads key + mode from `RuntimeConfig` (Postgres-over-env) instead of
-    Settings directly. `embedding_mode == 'local'` is Phase 2 — until the
-    local embedder lands, 'local' resolves to no embedder (placeholder).
+    Resolves mode (local | openai) + keys from `RuntimeConfig`
+    (Postgres-over-env).
     """
-    if not runtime.embeddings_enabled():
-        return None
-    if runtime.embedding_mode() == "local":
-        # Phase-2 local embedder not built yet — fall back to the
-        # deterministic placeholder rather than constructing OpenAI.
-        _log.info("embedder_local_mode_phase2_placeholder")
-        return None
-    api_key = runtime.openai_api_key()
-    assert api_key is not None  # embeddings_enabled() guarantees it
-    return OpenAIEmbedder(
-        api_key=api_key,
-        model=runtime.embedding_model(),
-        # 1536-dim — matches the ingest-side collections (_DEFAULT_VECTOR_SIZE).
-        dimension=1536,
-    )
+    return build_runtime_embedder(runtime)
 
 
 async def _close_embedder(embedder: object) -> None:

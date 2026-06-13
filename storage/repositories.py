@@ -170,6 +170,13 @@ class VectorRepository(Protocol):
 
     async def ensure_collection(self, name: str, vector_size: int) -> None: ...
 
+    async def recreate_collection(self, name: str, vector_size: int) -> None:
+        """Drop the collection (if present) and recreate it empty at
+        `vector_size`. Used when the embedding dimension changes (mode
+        switch) — `ensure_collection` can't resize an existing collection,
+        so the old-dimension vectors must be dropped before re-embedding."""
+        ...
+
     async def upsert_payload(self, collection: str, point: VectorPoint) -> None: ...
 
     async def upsert_payloads(

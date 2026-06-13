@@ -51,6 +51,14 @@ export default function SetupPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["config"] }),
   });
 
+  const useLocal = useMutation({
+    mutationFn: () => client.setEmbeddingMode("local"),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["config"] }),
+  });
+
+  const mode = config.data?.embedding_mode;
+  const localSelected = mode === "local" && (config.data?.embeddings_enabled ?? false);
+
   const finish = useMutation({
     mutationFn: () => client.completeOnboarding(),
     onSuccess: () => {
@@ -148,17 +156,38 @@ export default function SetupPage() {
               Embeddings power semantic search. Pick a provider, or skip and set it later.
             </div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {/* local — disabled, Phase 2 */}
-              <div className="rounded-xl border border-border bg-panel px-4 py-3.5 opacity-60">
+              {/* local — on-device, no key */}
+              <div
+                className={`rounded-xl border bg-bg px-4 py-3.5 ${
+                  localSelected ? "border-accent ring-1 ring-accentSoft" : "border-border2"
+                }`}
+              >
                 <div className="flex items-center gap-2">
-                  <span className="text-[13.5px] font-semibold">Local</span>
-                  <span className="rounded-md bg-panel2 px-1.5 py-0.5 text-[10px] font-bold text-muted">
-                    COMING SOON
+                  <span className="text-[13.5px] font-semibold text-accentInk">Local</span>
+                  <span className="rounded-md bg-accentSoft px-1.5 py-0.5 text-[10px] font-bold text-accentInk">
+                    FREE · OFFLINE
                   </span>
                 </div>
                 <div className="mt-1 text-[12px] text-muted">
-                  Free, offline, no key. Arrives in Phase 2.
+                  On-device embeddings (bge-small, 384-dim). No API key. Downloads a ~130 MB
+                  model on first use.
                 </div>
+                <div className="mt-2.5 flex items-center gap-2">
+                  <Btn
+                    primary
+                    onClick={() => useLocal.mutate()}
+                    className={useLocal.isPending || localSelected ? "pointer-events-none opacity-50" : ""}
+                  >
+                    {useLocal.isPending
+                      ? "Switching…"
+                      : localSelected
+                        ? "Selected ✓"
+                        : "Use local embeddings"}
+                  </Btn>
+                </div>
+                {useLocal.isError ? (
+                  <div className="mt-2 text-[12px] text-bad">Could not switch to local.</div>
+                ) : null}
               </div>
 
               {/* openai */}

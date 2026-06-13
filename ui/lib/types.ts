@@ -325,6 +325,18 @@ export interface AppConfig {
   mcp_key_hint: string | null;
 }
 
+/** Result of POST /config/embedding-mode. When the mode actually changed,
+ *  every repo's vector collection is rebuilt at the new dimension and its
+ *  units are re-embedded — these counts report that work. */
+export interface EmbeddingModeResult {
+  ok: boolean;
+  mode: EmbeddingMode;
+  reindexed: boolean;
+  repos_reindexed: number;
+  units_embedded: number;
+  failed_batches: number;
+}
+
 /** One-time key reveal from generate / rotate. */
 export interface McpKeyResponse {
   api_key: string;
