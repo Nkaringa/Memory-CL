@@ -27,6 +27,10 @@ dependencies = [
   "neo4j>=5.22",
   "redis>=5.0",
 
+  # Local embeddings (on-device, no API key) — fastembed ships quantized
+  # ONNX models (onnxruntime + tokenizers) with prebuilt manylinux wheels.
+  "fastembed>=0.7,<0.9",
+
   # Repo walking
   "pathspec>=0.12",
 
