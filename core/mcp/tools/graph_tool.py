@@ -123,16 +123,21 @@ class GetRelatedComponentsTool:
     async def execute(
         self, request: GetRelatedComponentsRequest, ctx: ExecutionContext
     ) -> dict[str, Any]:
+        clamped_depth = min(request.depth, 5)
         result = await _explore_impl(
             ctx.state,
             reference=request.component,
             repo_id=request.repo_id,
             direction="all",
-            depth=min(request.depth, 5),
+            depth=clamped_depth,
             request_id=ctx.request_id,
         )
         result["deprecated"] = "use explore"
         result["related"] = _legacy_candidates(result)  # v1 key
+        if clamped_depth < request.depth:
+            result["warning"] = (
+                "depth clamped to 5 (v1 compat); use explore for deeper traversal"
+            )
         return result
 
 
@@ -150,16 +155,21 @@ class QueryGraphTool:
     async def execute(
         self, request: QueryGraphRequest, ctx: ExecutionContext
     ) -> dict[str, Any]:
+        clamped_depth = min(request.depth, 5)
         result = await _explore_impl(
             ctx.state,
             reference=request.node,
             repo_id=request.repo_id,
             direction="all",
-            depth=min(request.depth, 5),
+            depth=clamped_depth,
             request_id=ctx.request_id,
         )
         result["deprecated"] = "use explore"
         result["candidates"] = _legacy_candidates(result)  # v1 key
+        if clamped_depth < request.depth:
+            result["warning"] = (
+                "depth clamped to 5 (v1 compat); use explore for deeper traversal"
+            )
         return result
 
 

@@ -933,6 +933,35 @@ def test_deprecated_tools_say_so_in_their_descriptions() -> None:
         assert tool.description.startswith("DEPRECATED — use " + replacement)
 
 
+@pytest.mark.asyncio
+async def test_query_graph_warns_when_depth_clamped() -> None:
+    """Requesting depth > 5 via the deprecated alias emits a warning."""
+    resp = await _run(_explore_state(), "query_graph",
+                      {"node": "pkg.m.seedfn", "repo_id": "acme", "depth": 8})
+    assert resp.status.value == "success"
+    assert "warning" in resp.data
+    assert "clamped" in resp.data["warning"]
+    assert "explore" in resp.data["warning"]
+
+
+@pytest.mark.asyncio
+async def test_query_graph_no_warning_when_depth_within_limit() -> None:
+    """depth <= 5 → no warning key added."""
+    resp = await _run(_explore_state(), "query_graph",
+                      {"node": "pkg.m.seedfn", "repo_id": "acme", "depth": 5})
+    assert resp.status.value == "success"
+    assert "warning" not in resp.data
+
+
+@pytest.mark.asyncio
+async def test_get_related_components_warns_when_depth_clamped() -> None:
+    resp = await _run(_explore_state(), "get_related_components",
+                      {"component": "pkg.m.seedfn", "repo_id": "acme", "depth": 7})
+    assert resp.status.value == "success"
+    assert "warning" in resp.data
+    assert "clamped" in resp.data["warning"]
+
+
 # ============================================================================
 #                          update_memory (kept, mutating)
 # ============================================================================
