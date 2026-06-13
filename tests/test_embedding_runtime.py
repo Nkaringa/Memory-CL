@@ -11,10 +11,12 @@ from datetime import UTC, datetime
 
 import pytest
 
+import apps.api.embedding_runtime as er
 from apps.api.embedding_runtime import (
     OPENAI_VECTOR_SIZE,
     active_embedding_dimension,
     build_runtime_embedder,
+    reindex_repo,
 )
 from core.config import Settings
 from core.config_runtime import RuntimeConfig
@@ -95,3 +97,113 @@ async def test_query_and_doc_dimensions_agree(mode: str) -> None:
         assert emb.dimension == active_embedding_dimension(rc)
     finally:
         await emb.aclose()  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# reindex_repo
+# ---------------------------------------------------------------------------
+class _FakeVectorRepo:
+    def __init__(self) -> None:
+        self.recreated: list[tuple[str, int]] = []
+        self.ensured: list[tuple[str, int]] = []
+
+    async def recreate_collection(self, name: str, size: int) -> None:
+        self.recreated.append((name, size))
+
+    async def ensure_collection(self, name: str, size: int) -> None:
+        self.ensured.append((name, size))
+
+
+class _FakeUnitsRepo:
+    def __init__(self, n: int) -> None:
+        self._n = n
+
+    async def list_units_for_repo(self, repo_id: str) -> list[object]:
+        return [object() for _ in range(self._n)]
+
+
+class _FakeState:
+    def __init__(self, vr: _FakeVectorRepo, ur: _FakeUnitsRepo) -> None:
+        self.vector_repo = vr
+        self.units_repo = ur
+
+
+async def test_reindex_disabled_recreates_collection_but_embeds_nothing() -> None:
+    rc = await _runtime(_row())  # openai mode, no key -> embeddings disabled
+    vr = _FakeVectorRepo()
+    state = _FakeState(vr, _FakeUnitsRepo(5))
+    res = await reindex_repo(state, Settings(), rc, "r1", recreate=True)  # type: ignore[arg-type]
+    assert vr.recreated == [("repo_r1", OPENAI_VECTOR_SIZE)]
+    assert res.units_total == 5
+    assert res.units_embedded == 0
+    assert res.failed_batches == 0
+
+
+async def test_reindex_recreate_false_ensures_instead() -> None:
+    rc = await _runtime(_row())
+    vr = _FakeVectorRepo()
+    state = _FakeState(vr, _FakeUnitsRepo(0))
+    await reindex_repo(state, Settings(), rc, "r1", recreate=False)  # type: ignore[arg-type]
+    assert vr.ensured == [("repo_r1", OPENAI_VECTOR_SIZE)]
+    assert vr.recreated == []
+
+
+async def test_reindex_embeds_in_batches_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_calls: list[int] = []
+
+    class _FakeEmbedder:
+        dimension = 384
+
+        async def aclose(self) -> None:
+            return None
+
+    class _FakePipeline:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def run(self, batch: list[object], *, collection: str) -> None:
+            run_calls.append(len(batch))
+
+    monkeypatch.setattr(er, "build_runtime_embedder", lambda rc: _FakeEmbedder())
+    monkeypatch.setattr(er, "EmbeddingPipeline", _FakePipeline)
+
+    rc = await _runtime(_row(embedding_mode="local"))  # enabled, 384-dim
+    vr = _FakeVectorRepo()
+    # 450 units -> 3 batches at REINDEX_BATCH_SIZE=200 (200, 200, 50).
+    state = _FakeState(vr, _FakeUnitsRepo(450))
+    res = await reindex_repo(state, Settings(), rc, "r1", recreate=True)  # type: ignore[arg-type]
+    assert vr.recreated == [("repo_r1", 384)]
+    assert run_calls == [200, 200, 50]
+    assert res.units_embedded == 450
+    assert res.failed_batches == 0
+
+
+async def test_reindex_isolates_batch_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeEmbedder:
+        dimension = 384
+
+        async def aclose(self) -> None:
+            return None
+
+    class _FailingPipeline:
+        def __init__(self, **kwargs: object) -> None:
+            self._n = 0
+
+        async def run(self, batch: list[object], *, collection: str) -> None:
+            self._n += 1
+            if self._n == 1:
+                raise RuntimeError("provider boom")
+
+    monkeypatch.setattr(er, "build_runtime_embedder", lambda rc: _FakeEmbedder())
+    monkeypatch.setattr(er, "EmbeddingPipeline", _FailingPipeline)
+
+    rc = await _runtime(_row(embedding_mode="local"))
+    state = _FakeState(_FakeVectorRepo(), _FakeUnitsRepo(300))  # 2 batches
+    res = await reindex_repo(state, Settings(), rc, "r1", recreate=True)  # type: ignore[arg-type]
+    # First batch fails, second succeeds -> 100 embedded, 1 failed batch.
+    assert res.failed_batches == 1
+    assert res.units_embedded == 100

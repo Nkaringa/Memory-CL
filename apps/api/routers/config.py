@@ -26,10 +26,14 @@ import secrets
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from apps.api.dependencies import RuntimeConfigDep
+from apps.api.dependencies import AppStateDep, RuntimeConfigDep
+from apps.api.embedding_runtime import reindex_repo
 from apps.mcp.auth import ApiKeyDep
+from core import get_logger, get_settings
 
 router = APIRouter(prefix="/config", tags=["config"])
+
+_log = get_logger(__name__)
 
 # Length of generated MCP keys. token_urlsafe(32) → ~43 url-safe chars.
 _MCP_KEY_ENTROPY_BYTES = 32
@@ -67,6 +71,19 @@ class EmbeddingModeRequest(BaseModel):
 class OkResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     ok: bool = True
+
+
+class EmbeddingModeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ok: bool = True
+    mode: str
+    # True when the mode actually changed and collections were rebuilt at
+    # the new dimension. False when the requested mode equalled the current
+    # one (idempotent no-op — no re-index).
+    reindexed: bool
+    repos_reindexed: int = 0
+    units_embedded: int = 0
+    failed_batches: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -181,24 +198,69 @@ async def set_openai_key(
     return OkResponse()
 
 
-@router.post("/embedding-mode", response_model=OkResponse)
+@router.post("/embedding-mode", response_model=EmbeddingModeResponse)
 async def set_embedding_mode(
     body: EmbeddingModeRequest,
     runtime: RuntimeConfigDep,
+    state: AppStateDep,
     api_key: ApiKeyDep,
-) -> OkResponse:
-    """Choose the embedding mode. 'local' is accepted but Phase 2 (the
-    local embedder isn't built yet, so 'local' currently means no real
-    embeddings). Bootstrap-or-authed; invalidates the cache."""
+) -> EmbeddingModeResponse:
+    """Choose the embedding mode ('openai' | 'local'). Bootstrap-or-authed.
+
+    Switching modes changes the vector dimension (openai 1536 ↔ local 384),
+    so the existing per-repo Qdrant collections — sized for the old model —
+    become incompatible. On an ACTUAL change this rebuilds every repo's
+    collection at the new dimension and re-embeds its stored units with the
+    new model, so retrieval keeps working (rather than silently returning
+    noise against mismatched vectors). A no-op request (mode unchanged)
+    skips the re-index. The re-index runs inline; for a self-hosted corpus
+    this is seconds-to-minutes — acceptable for an explicit operator action.
+    """
     _require_bootstrap_or_authed(runtime, api_key)
     if body.mode not in ("openai", "local"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="mode must be 'openai' or 'local'",
         )
+
+    previous_mode = runtime.embedding_mode()
     await runtime.repo.set_embedding_mode(body.mode)
     await runtime.refresh()
-    return OkResponse()
+
+    if body.mode == previous_mode:
+        return EmbeddingModeResponse(mode=body.mode, reindexed=False)
+
+    _log.info(
+        "embedding_mode_changed",
+        previous=previous_mode,
+        new=body.mode,
+    )
+    settings = get_settings()
+    repos = await state.units_repo.list_repos()
+    repos_reindexed = 0
+    units_embedded = 0
+    failed_batches = 0
+    for summary in repos:
+        result = await reindex_repo(
+            state, settings, runtime, summary.repo_id, recreate=True
+        )
+        repos_reindexed += 1
+        units_embedded += result.units_embedded
+        failed_batches += result.failed_batches
+    _log.info(
+        "embedding_mode_reindex_complete",
+        mode=body.mode,
+        repos=repos_reindexed,
+        units_embedded=units_embedded,
+        failed_batches=failed_batches,
+    )
+    return EmbeddingModeResponse(
+        mode=body.mode,
+        reindexed=True,
+        repos_reindexed=repos_reindexed,
+        units_embedded=units_embedded,
+        failed_batches=failed_batches,
+    )
 
 
 @router.post("/complete-onboarding", response_model=OkResponse)
