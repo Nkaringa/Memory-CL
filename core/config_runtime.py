@@ -123,11 +123,12 @@ class RuntimeConfig:
     def embeddings_enabled(self) -> bool:
         """True when embeddings can run.
 
-        Phase 1: true iff an OpenAI key resolves. `embedding_mode == 'local'`
-        is accepted as a setting but the local embedder is Phase 2 — until
-        then 'local' resolves to NO real embedder (placeholder behavior),
-        so it does NOT flip this to True on its own.
+        Local mode (Phase 2): always enabled — the on-device embedder
+        (fastembed) needs no API key. OpenAI mode: enabled iff an OpenAI
+        key resolves (runtime or env).
         """
+        if self.embedding_mode() == "local":
+            return True
         return self.openai_api_key() is not None
 
     def onboarding_completed(self) -> bool:

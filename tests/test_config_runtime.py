@@ -121,14 +121,14 @@ async def test_embeddings_disabled_when_no_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_local_mode_does_not_enable_embeddings_without_key() -> None:
-    """Phase-1: 'local' is accepted but the local embedder is Phase 2, so
-    it must NOT flip embeddings_enabled on by itself."""
+async def test_local_mode_enables_embeddings_without_openai_key() -> None:
+    """Phase-2: the on-device embedder needs no API key, so selecting
+    'local' enables embeddings even with no OpenAI key configured."""
     repo = _FakeAppConfigRepo(_row(embedding_mode="local"))
     rc = RuntimeConfig(repo, _settings())  # type: ignore[arg-type]
     await rc.refresh()
     assert rc.embedding_mode() == "local"
-    assert rc.embeddings_enabled() is False
+    assert rc.embeddings_enabled() is True
 
 
 # ---------------------------------------------------------------------------

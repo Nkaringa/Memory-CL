@@ -6,20 +6,27 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.dependencies import AppStateDep
+from apps.api.embedding_runtime import (
+    OPENAI_VECTOR_SIZE,
+    active_embedding_dimension,
+    build_runtime_embedder,
+)
 from apps.api.state import AppState
 from apps.mcp.auth import ApiKeyDep
 from core import get_settings
 from core.config import Settings
 from core.config_runtime import RuntimeConfig
-from core.embeddings import ChunkingStrategy, EmbeddingPipeline, OpenAIEmbedder
+from core.embeddings import ChunkingStrategy, Embedder, EmbeddingPipeline, OpenAIEmbedder
 from core.ingestion import IngestionPipeline, make_context
 
 router = APIRouter(prefix="/ingest", tags=["ingestion"])
 
-# Phase 2 hard cap: until embeddings land in Phase 3, the Qdrant
-# collection vector size is fixed by config. We pin to 1536 (OpenAI
-# small / Voyage default) when no explicit dimension is provided.
-_DEFAULT_VECTOR_SIZE = 1536
+# Default Qdrant vector size when no runtime config is available (legacy /
+# test path): the OpenAI small / deterministic-placeholder dimension. The
+# production path sizes the collection from `active_embedding_dimension`
+# (384 in local mode, 1536 in openai mode) so the collection always
+# matches the embedder that will write to it.
+_DEFAULT_VECTOR_SIZE = OPENAI_VECTOR_SIZE
 
 # Reembed backfill processes units in fixed-size batches so a single
 # provider failure only loses one batch, not the whole repo.
@@ -69,41 +76,36 @@ def _build_embedding_components(
     state: AppState,
     settings: Settings,
     runtime: RuntimeConfig | None = None,
-) -> tuple[EmbeddingPipeline, OpenAIEmbedder] | None:
+) -> tuple[EmbeddingPipeline, Embedder] | None:
     """Construct the Phase-3 embedding stack, or None when disabled.
 
-    Returned as a (pipeline, embedder) pair so callers can `aclose()`
-    the embedder's HTTP client after the request. Module-level function
-    (not a closure) so tests can monkeypatch it with a fake pipeline.
+    Returned as a (pipeline, embedder) pair so callers can `aclose()` the
+    embedder after the request (no-op for the local embedder, releases the
+    HTTP client for the OpenAI one). Module-level function (not a closure)
+    so tests can monkeypatch it with a fake pipeline.
 
-    When `runtime` is supplied (the production path), the enable
-    decision, OpenAI key, and embedding model are resolved from
-    `RuntimeConfig` (Postgres-over-env) — so a key set/cleared at runtime
-    takes effect on the next ingest without a restart. When `runtime` is
-    None (legacy / test path), it reads straight from `settings`, the
-    exact pre-onboarding behavior. `embedding_mode == 'local'` is Phase 2:
-    until the local embedder lands it disables embeddings (placeholder).
+    When `runtime` is supplied (the production path), the mode (local |
+    openai), enable decision, key, and model are resolved from
+    `RuntimeConfig` (Postgres-over-env) via the shared
+    `build_runtime_embedder` — so a key/mode change takes effect on the
+    next ingest without a restart, and the embedder matches the one the
+    query side uses. When `runtime` is None (legacy / test path), it reads
+    straight from `settings` (always OpenAI), the pre-onboarding behavior.
     """
     if runtime is not None:
-        if not runtime.embeddings_enabled():
+        embedder = build_runtime_embedder(runtime)
+        if embedder is None:
             return None
-        if runtime.embedding_mode() == "local":
-            return None  # Phase-2 local embedder not built yet
-        api_key = runtime.openai_api_key()
-        assert api_key is not None  # embeddings_enabled() guarantees it
-        embedding_model = runtime.embedding_model()
     else:
         if not settings.embeddings_enabled:
             return None
         assert settings.openai_api_key is not None  # guaranteed by enabled
-        api_key = settings.openai_api_key.get_secret_value()
-        embedding_model = settings.embedding_model
+        embedder = OpenAIEmbedder(
+            api_key=settings.openai_api_key.get_secret_value(),
+            model=settings.embedding_model,
+            dimension=_DEFAULT_VECTOR_SIZE,
+        )
 
-    embedder = OpenAIEmbedder(
-        api_key=api_key,
-        model=embedding_model,
-        dimension=_DEFAULT_VECTOR_SIZE,
-    )
     pipeline = EmbeddingPipeline(
         embedder=embedder,
         chunker=ChunkingStrategy(
@@ -150,7 +152,16 @@ async def ingest_repo(
     # The user-facing repo_id is unchanged; only the storage-layer name
     # is rewritten.
     collection = f"repo_{req.repo_id}"
-    await state.vector_repo.ensure_collection(collection, _DEFAULT_VECTOR_SIZE)
+    # Size the collection to the ACTIVE embedding dimension (384 in local
+    # mode, 1536 in openai mode) so the vectors the embedder produces fit
+    # the collection. Mismatched sizes get rejected by Qdrant mid-upsert.
+    runtime = getattr(request.app.state, "runtime_config", None)
+    vector_size = (
+        active_embedding_dimension(runtime)
+        if runtime is not None
+        else _DEFAULT_VECTOR_SIZE
+    )
+    await state.vector_repo.ensure_collection(collection, vector_size)
 
     ctx = make_context(
         repo_id=req.repo_id,
@@ -161,7 +172,6 @@ async def ingest_repo(
         graph_repo=state.graph_repo,
         vector_repo=state.vector_repo,
     )
-    runtime = getattr(request.app.state, "runtime_config", None)
     components = _build_embedding_components(state, get_settings(), runtime)
     try:
         result = await IngestionPipeline(

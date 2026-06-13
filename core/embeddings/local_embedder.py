@@ -95,6 +95,12 @@ class LocalEmbedder:
     def dimension(self) -> int:
         return self._dimension
 
+    async def aclose(self) -> None:
+        """No-op teardown — symmetry with `OpenAIEmbedder.aclose` so callers
+        can release any embedder uniformly. fastembed holds no sockets; the
+        ONNX session is freed with the object."""
+        return None
+
     async def _ensure_model(self) -> object:
         """Load the ONNX model once, serialized against concurrent first-use."""
         if self._model is not None:
