@@ -28,6 +28,7 @@ from apps.cli import render
 from apps.cli.config import (
     INGEST_DEFAULT_TIMEOUT,
     CliSettings,
+    ConfigError,
     config_path,
     resolve_settings,
     write_config_file,
@@ -101,14 +102,19 @@ def resolve_server_path(path: str, override: str | None) -> tuple[str, bool]:
 
 def _explain_server_path(
     ui: UI, local_path: str, server_path: str, base_url: str,
+    ssh_user: str = "memcl",
 ) -> None:
     host = urlparse(base_url).hostname or "<server-host>"
     local = Path(local_path).expanduser().resolve()
+    repo_name = local.name or "repo"
     ui.note("The Memory-CL API ingests from ITS OWN filesystem, not this machine.")
     ui.note(f"Mapped local path {local} -> server path {server_path}.")
     ui.note("If the code is not on the server yet, sync it first:")
-    ui.note(f"  rsync -av --exclude='.git' {local}/ {host}:{server_path}/")
-    ui.note("(adjust the target if /repos is volume-mounted from another host dir)")
+    ui.note(
+        f"  rsync -a --delete {local}/ "
+        f"{ssh_user}@{host}:~/repos/{repo_name}/"
+    )
+    ui.note("(adjust the target if ~/repos is mounted from another host dir)")
     ui.note("Then re-run. Use --server-path to choose a different container path.")
 
 
@@ -162,7 +168,10 @@ async def _cmd_ingest(
     commit_sha: str = args.commit_sha or infer_commit_sha(path)
     server_path, mapped = resolve_server_path(path, args.server_path)
     if mapped:
-        _explain_server_path(ui, path, server_path, settings.base_url_value)
+        _explain_server_path(
+            ui, path, server_path, settings.base_url_value,
+            settings.ssh_user_value,
+        )
 
     try:
         if _json_mode(args):
@@ -197,18 +206,29 @@ async def _cmd_ingest(
             ui.error(str(detail))
             if not mapped:
                 _explain_server_path(
-                    ui, path, server_path, settings.base_url_value
+                    ui, path, server_path, settings.base_url_value,
+                    settings.ssh_user_value,
                 )
             return 1
         raise
 
 
+_POLL_TIMEOUT = 10.0  # short timeout so a stalled /repos never blocks the spinner
+
+
 async def _poll_unit_count(
     client: AsyncMemoryClient, repo_id: str,
 ) -> int | None:
-    """Best-effort unit count for `repo_id` — progress signal only."""
+    """Best-effort unit count for `repo_id` — progress signal only.
+
+    Returns None on any failure so the caller can fall back to its last
+    known value rather than treating 0 as a meaningful update.
+    """
     try:
-        for repo in (await client.get_repos()).repos:
+        repos_result = await asyncio.wait_for(
+            client.get_repos(), timeout=_POLL_TIMEOUT
+        )
+        for repo in repos_result.repos:
             if repo.repo_id == repo_id:
                 return repo.units
     except Exception:
@@ -238,7 +258,8 @@ async def _ingest_with_progress(
                 break
             tick += 1
             if tick % 2 == 0:
-                units = await _poll_unit_count(client, repo_id) or units
+                count = await _poll_unit_count(client, repo_id)
+                units = count if count is not None else units
             text = (
                 f"Ingesting {repo_id} — "
                 f"{_fmt_elapsed(time.monotonic() - start)} elapsed"
@@ -476,8 +497,22 @@ async def _cmd_snapshot_replay(
     client: AsyncMemoryClient, args: argparse.Namespace, ui: UI,
     settings: CliSettings,
 ) -> int:
-    payload: Any = json.loads(args.payload) if args.payload else None
-    expected: Any = json.loads(args.expected) if args.expected else None
+    try:
+        payload: Any = json.loads(args.payload) if args.payload else None
+    except json.JSONDecodeError as exc:
+        if _json_mode(args):
+            _emit_error({"error": "bad_json", "field": "payload", "detail": str(exc)})
+        else:
+            ui.error(f"--payload is not valid JSON: {exc}")
+        return 2
+    try:
+        expected: Any = json.loads(args.expected) if args.expected else None
+    except json.JSONDecodeError as exc:
+        if _json_mode(args):
+            _emit_error({"error": "bad_json", "field": "expected", "detail": str(exc)})
+        else:
+            ui.error(f"--expected is not valid JSON: {exc}")
+        return 2
     res = await client.replay_snapshot(
         snapshot_id=args.snapshot_id, payload=payload, expected_output=expected,
     )
@@ -536,7 +571,8 @@ async def _cmd_graph_legacy(
     settings: CliSettings,
 ) -> int:
     ui.note("memcl graph is deprecated — use: memcl explore")
-    args.direction = "all"
+    if not getattr(args, "direction", None):
+        args.direction = "all"
     return await _cmd_explore(client, args, ui, settings)
 
 
@@ -824,14 +860,22 @@ def main(argv: list[str] | None = None) -> int:
 
 async def _dispatch(args: argparse.Namespace) -> int:
     ui = UI()
-    settings = resolve_settings(
-        base_url_flag=args.base_url,
-        api_key_flag=args.api_key,
-        timeout_flag=args.timeout,
-    )
+    try:
+        settings = resolve_settings(
+            base_url_flag=args.base_url,
+            api_key_flag=args.api_key,
+            timeout_flag=args.timeout,
+        )
+    except ConfigError as exc:
+        ui.error(str(exc))
+        return 1
 
     if args.command == "config":
-        return _cmd_config(args, ui, settings)
+        try:
+            return _cmd_config(args, ui, settings)
+        except (OSError, ValueError) as exc:
+            ui.error(str(exc))
+            return 1
 
     timeout = settings.timeout_value
     if args.command == "ingest" and settings.timeout.source == "default":
@@ -891,7 +935,12 @@ def _render_http_error(ui: UI, exc: MemoryClientError, json_mode: bool) -> None:
             "API key rejected — set MEMCL_API_KEY or run memcl config init"
         )
         return
-    detail: Any = exc.body
+    if exc.status_code == 200:
+        # Tool-level failure on an HTTP 200 envelope — show the tool's own error.
+        detail: Any = exc.body
+        ui.error(str(detail) if detail else "tool returned an error (no detail)")
+        return
+    detail = exc.body
     if isinstance(exc.body, dict) and "detail" in exc.body:
         detail = exc.body["detail"]
     ui.error(f"server returned HTTP {exc.status_code} for {exc.url}: {detail}")

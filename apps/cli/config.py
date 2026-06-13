@@ -18,6 +18,10 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+
+class ConfigError(ValueError):
+    """Bad configuration value — rendered as one line, exit 1."""
+
 DEFAULT_BASE_URL = "http://localhost:8000"
 DEFAULT_TIMEOUT = 30.0
 
@@ -73,11 +77,22 @@ class Resolved:
     source: str  # "flag" | "env" | "config" | "default"
 
 
+DEFAULT_SSH_USER = "memcl"
+
+
 @dataclass(frozen=True)
 class CliSettings:
     base_url: Resolved
     api_key: Resolved
     timeout: Resolved
+    ssh_user: Resolved = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        # Provide a default Resolved for ssh_user when not supplied.
+        if self.ssh_user is None:
+            object.__setattr__(
+                self, "ssh_user", Resolved(DEFAULT_SSH_USER, "default")
+            )
 
     @property
     def base_url_value(self) -> str:
@@ -90,6 +105,10 @@ class CliSettings:
     @property
     def timeout_value(self) -> float:
         return float(self.timeout.value)  # type: ignore[arg-type]
+
+    @property
+    def ssh_user_value(self) -> str:
+        return str(self.ssh_user.value) if self.ssh_user.value else DEFAULT_SSH_USER
 
 
 def _pick(
@@ -105,10 +124,26 @@ def _pick(
         return Resolved(flag, "flag")
     env = os.environ.get(env_name)
     if env is not None and env != "":
-        return Resolved(float(env) if as_float else env, "env")
+        if as_float:
+            try:
+                return Resolved(float(env), "env")
+            except ValueError as exc:
+                raise ConfigError(
+                    f"timeout must be a number, got: {env!r} "
+                    f"(from env var {env_name})"
+                ) from exc
+        return Resolved(env, "env")
     raw = file_values.get(file_key)
     if raw is not None:
-        return Resolved(float(raw) if as_float else str(raw), "config")  # type: ignore[arg-type]
+        if as_float:
+            try:
+                return Resolved(float(raw), "config")  # type: ignore[arg-type]
+            except (ValueError, TypeError) as exc:
+                raise ConfigError(
+                    f"timeout must be a number, got: {raw!r} "
+                    f"(from config file, key '{file_key}')"
+                ) from exc
+        return Resolved(str(raw), "config")
     return Resolved(default, "default")
 
 
@@ -120,6 +155,11 @@ def resolve_settings(
 ) -> CliSettings:
     """Apply the full precedence chain once, up front."""
     file_values = load_config_file()
+    raw_ssh_user = file_values.get("ssh_user")
+    ssh_user = Resolved(
+        str(raw_ssh_user) if raw_ssh_user is not None else DEFAULT_SSH_USER,
+        "config" if raw_ssh_user is not None else "default",
+    )
     return CliSettings(
         base_url=_pick(
             base_url_flag, "MEMCL_BASE_URL", file_values, "base_url",
@@ -132,14 +172,17 @@ def resolve_settings(
             timeout_flag, "MEMCL_TIMEOUT", file_values, "timeout",
             DEFAULT_TIMEOUT, as_float=True,
         ),
+        ssh_user=ssh_user,
     )
 
 
 __all__ = [
     "DEFAULT_BASE_URL",
+    "DEFAULT_SSH_USER",
     "DEFAULT_TIMEOUT",
     "INGEST_DEFAULT_TIMEOUT",
     "CliSettings",
+    "ConfigError",
     "Resolved",
     "config_path",
     "load_config_file",

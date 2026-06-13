@@ -582,8 +582,10 @@ def test_cli_ingest_explains_server_path_model(
     assert rc == 0
     err = capsys.readouterr().err
     assert "ITS OWN filesystem" in err
-    assert "rsync -av" in err
-    assert "/repos/localonly" in err
+    # Fix #4: correct rsync command includes ssh user and ~/repos/ target
+    assert "rsync -a --delete" in err
+    assert "memcl@" in err
+    assert "~/repos/localonly/" in err
 
 
 def test_cli_ingest_server_path_override(
@@ -1057,3 +1059,217 @@ def test_cli_no_repos_message(
     captured = capsys.readouterr()
     assert "No repositories ingested yet" in captured.out
     assert "memcl ingest" in captured.err  # the hint
+
+
+# =========================================================================
+#                    CLI — hardened error paths (new fixes)
+# =========================================================================
+
+# --- Fix #1: bad timeout values produce friendly errors, not tracebacks ---
+
+def test_bad_timeout_env_var_is_friendly(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """MEMCL_TIMEOUT=abc must not traceback — exit 1 with readable message."""
+    monkeypatch.setenv("MEMCL_TIMEOUT", "abc")
+    rc = cli_main(["repos"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "timeout must be a number" in err
+    assert "abc" in err
+    assert "Traceback" not in err
+
+
+def test_bad_timeout_config_file_is_friendly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """timeout = \"30s\" in config.toml must not traceback."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('timeout = "30s"\n', encoding="utf-8")
+    monkeypatch.setenv("MEMCL_CONFIG", str(cfg))
+    rc = cli_main(["repos"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "timeout must be a number" in err
+    assert "30s" in err
+    assert "Traceback" not in err
+
+
+# --- Fix #2: bad JSON in snapshot replay produces friendly errors ---
+
+def test_snapshot_replay_bad_payload_json_is_friendly(
+    asgi_transport: httpx.ASGITransport, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--payload with invalid JSON must exit 2, no traceback."""
+    _patch_cli_transport(monkeypatch, asgi_transport)
+    rc = cli_main([
+        "snapshot", "replay", "snap-abc", "--payload", "{not valid json}",
+    ])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "not valid JSON" in err or "bad_json" in err
+    assert "Traceback" not in err
+
+
+def test_snapshot_replay_bad_expected_json_is_friendly(
+    asgi_transport: httpx.ASGITransport, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--expected with invalid JSON must exit 2, no traceback."""
+    _patch_cli_transport(monkeypatch, asgi_transport)
+    rc = cli_main([
+        "snapshot", "replay", "snap-abc",
+        "--payload", '{"x": 1}',
+        "--expected", "not-json!",
+    ])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "not valid JSON" in err or "bad_json" in err
+    assert "Traceback" not in err
+
+
+def test_snapshot_replay_bad_payload_json_json_mode(
+    asgi_transport: httpx.ASGITransport, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--json mode: bad payload JSON emits structured error to stderr."""
+    _patch_cli_transport(monkeypatch, asgi_transport)
+    rc = cli_main([
+        "snapshot", "replay", "snap-abc",
+        "--payload", "{bad}", "--json",
+    ])
+    assert rc == 2
+    err_text = capsys.readouterr().err
+    err_payload = json.loads(err_text)
+    assert err_payload["error"] == "bad_json"
+    assert err_payload["field"] == "payload"
+
+
+# --- Fix #3: config command OSError/ValueError is friendly ---
+
+def test_config_init_oserror_is_friendly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """OSError from write_config_file must not traceback."""
+    # Point config to a path whose parent is a file (can't mkdir).
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("MEMCL_CONFIG", str(blocker / "config.toml"))
+    rc = cli_main(["config", "init"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+
+
+# --- Fix #4: rsync hint uses correct ssh-user and ~/repos/ path ---
+
+def test_rsync_hint_has_correct_format(
+    asgi_transport: httpx.ASGITransport, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The rsync hint must be copy-paste correct: user@host:~/repos/<name>/."""
+    repo = tmp_path / "my-service"
+    repo.mkdir()
+    _patch_cli_transport(monkeypatch, asgi_transport)
+    rc = cli_main(["--base-url", "http://192.168.200.188:8000", "ingest", str(repo)])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "rsync -a --delete" in err
+    assert "memcl@192.168.200.188:~/repos/my-service/" in err
+    assert "Traceback" not in err
+
+
+def test_rsync_hint_respects_ssh_user_from_config(
+    asgi_transport: httpx.ASGITransport, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """ssh_user in config.toml overrides the default 'memcl'."""
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        'base_url = "http://myhost:8000"\n'
+        'ssh_user = "deploy"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEMCL_CONFIG", str(cfg))
+    _patch_cli_transport(monkeypatch, asgi_transport)
+    rc = cli_main(["ingest", str(repo)])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "deploy@myhost:~/repos/proj/" in err
+
+
+# --- Fix #5/#6: poll sentinel and short timeout ---
+
+def test_poll_unit_count_returns_none_on_failure() -> None:
+    """_poll_unit_count must return None (not raise) when the call fails."""
+    import asyncio as _asyncio
+    from apps.cli.main import _poll_unit_count
+
+    class _FailClient:
+        async def get_repos(self):
+            raise RuntimeError("connection refused")
+
+    result = _asyncio.run(_poll_unit_count(_FailClient(), "acme"))  # type: ignore[arg-type]
+    assert result is None
+
+
+def test_poll_unit_count_returns_zero_not_none() -> None:
+    """_poll_unit_count must return 0 (not None) when a repo has 0 units."""
+    import asyncio as _asyncio
+    from apps.cli.main import _poll_unit_count
+
+    class _FakeRepos:
+        repos = [type("R", (), {"repo_id": "acme", "units": 0})()]
+
+    class _ZeroClient:
+        async def get_repos(self):
+            return _FakeRepos()
+
+    result = _asyncio.run(_poll_unit_count(_ZeroClient(), "acme"))  # type: ignore[arg-type]
+    assert result == 0  # was previously falsy and fell back to stale value
+
+
+# --- Fix #7: HTTP 200 tool error renders tool message, not "HTTP 200" ---
+
+def test_tool_failure_renders_tool_error_not_http_200(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A tool-level error on HTTP 200 should show the tool's error, not 'HTTP 200'."""
+    @asynccontextmanager
+    async def _ls(_app: FastAPI):
+        yield
+    app = FastAPI(lifespan=_ls)
+
+    @app.post("/mcp/tools/{tool}")
+    async def failed_tool(tool: str, _body: dict):
+        return {
+            "tool": tool, "request_id": "rid", "status": "failed",
+            "error": "repo_not_found", "error_code": "repo_not_found",
+            "data": {}, "latency_ms": 0.0, "schema_version": "1",
+        }
+
+    _patch_cli_transport(monkeypatch, httpx.ASGITransport(app=app))
+    rc = cli_main(["search", "x", "-r", "acme", "--json"])
+    assert rc == 1
+    err_text = capsys.readouterr().err
+    # Must not say "HTTP 200"
+    assert "HTTP 200" not in err_text
+
+
+# --- Fix #8: _cmd_graph_legacy sets direction defensively ---
+
+def test_graph_legacy_sets_direction_when_absent(
+    fake_api: FastAPI, asgi_transport: httpx.ASGITransport,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """memcl graph must not AttributeError on missing args.direction."""
+    _patch_cli_transport(monkeypatch, asgi_transport)
+    rc = cli_main(["graph", "pkg.auth.login", "--repo-id", "acme"])
+    assert rc == 0
+    assert fake_api.state.captured["mcp:explore"]["direction"] == "all"
+    assert "Traceback" not in capsys.readouterr().err
