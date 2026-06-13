@@ -8,7 +8,7 @@ Usage:
     from sdk import AsyncMemoryClient
 
     async with AsyncMemoryClient(base_url="http://localhost:8000") as c:
-        result = await c.retrieve(text="auth flow", repo_id="acme")
+        result = await c.search_code(question="auth flow", repo_id="acme")
 """
 
 from sdk.client import (
@@ -16,25 +16,45 @@ from sdk.client import (
     MemoryClientError,
 )
 from sdk.types import (
+    ExploreNeighbor,
+    ExploreResult,
+    FindSymbolResult,
     IngestResult,
     McpToolResult,
     QueryGraphResult,
+    ReadUnitResult,
     ReembedResult,
     ReplayResult,
+    RepoOverviewResult,
+    ReposResult,
+    RepoSummary,
     RetrieveResult,
+    SearchCodeResult,
+    SearchHit,
     SnapshotResult,
     StatusResult,
+    SymbolMatch,
 )
 
 __all__ = [
     "AsyncMemoryClient",
+    "ExploreNeighbor",
+    "ExploreResult",
+    "FindSymbolResult",
     "IngestResult",
     "McpToolResult",
     "MemoryClientError",
     "QueryGraphResult",
+    "ReadUnitResult",
     "ReembedResult",
     "ReplayResult",
+    "RepoOverviewResult",
+    "RepoSummary",
+    "ReposResult",
     "RetrieveResult",
+    "SearchCodeResult",
+    "SearchHit",
     "SnapshotResult",
     "StatusResult",
+    "SymbolMatch",
 ]
