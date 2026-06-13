@@ -107,6 +107,7 @@ Step-by-step setup with prerequisites:
 | You are… | Start here |
 |---|---|
 | **First-time reader** | [docs/01_OVERVIEW](docs/01_OVERVIEW.md) → [docs/02_ARCHITECTURE](docs/02_ARCHITECTURE.md) → [docs/03_DATA_FLOW](docs/03_DATA_FLOW.md) |
+| **Evaluating what's actually here** | [docs/27_FEATURE_MATRIX](docs/27_FEATURE_MATRIX.md) — every feature by audience tier, with verified maturity labels |
 | **Setting up locally** | [docs/04_INSTALLATION](docs/04_INSTALLATION.md) → [docs/05_LOCAL_DEVELOPMENT](docs/05_LOCAL_DEVELOPMENT.md) → [docs/06_CONFIGURATION](docs/06_CONFIGURATION.md) |
 | **Integrating an agent** | [docs/07_API_REFERENCE](docs/07_API_REFERENCE.md) → [docs/08_MCP_TOOLING](docs/08_MCP_TOOLING.md) → [docs/MCP_SERVER](docs/MCP_SERVER.md) / [docs/MCP_BRIDGE](docs/MCP_BRIDGE.md) → [docs/20_SDK_GUIDE](docs/20_SDK_GUIDE.md) |
 | **Debugging a query** | [docs/09_RETRIEVAL_SYSTEM](docs/09_RETRIEVAL_SYSTEM.md) → [docs/10_RANKING_ENGINE](docs/10_RANKING_ENGINE.md) → [docs/18_UI_GUIDE](docs/18_UI_GUIDE.md) |
