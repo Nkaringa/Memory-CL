@@ -309,6 +309,27 @@ export interface QnamesResponse {
   matches: QnameMatch[];
 }
 
+// ---- Config / onboarding --------------------------------------------------
+export type EmbeddingMode = "openai" | "local";
+
+/** Onboarding + key state served by `GET /config`. NEVER carries raw keys —
+ *  the MCP key is exposed only as a masked hint, and the OpenAI key only as a
+ *  set/not-set boolean. */
+export interface AppConfig {
+  configured: boolean;
+  onboarding_completed: boolean;
+  embedding_mode: EmbeddingMode;
+  embeddings_enabled: boolean;
+  has_openai_key: boolean;
+  /** Masked tail of the configured MCP key (e.g. "••••abcd"), or null. */
+  mcp_key_hint: string | null;
+}
+
+/** One-time key reveal from generate / rotate. */
+export interface McpKeyResponse {
+  api_key: string;
+}
+
 // ---- Generic API error ----------------------------------------------------
 export interface ApiErrorBody {
   detail?: string | Record<string, unknown>;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, Sparkles, X } from "lucide-react";
 import { useState } from "react";
 import { getMemoryClient } from "@/lib/api";
 import { PageHeader, Panel, Tile, Btn, LiveBadge } from "@/components/shell/primitives";
@@ -11,6 +11,7 @@ export default function CommandCenter() {
   const [dismissed, setDismissed] = useState(false);
   const client = getMemoryClient();
 
+  const config = useQuery({ queryKey: ["config"], queryFn: () => client.getConfig() });
   const status = useQuery({ queryKey: ["status"], queryFn: () => client.status(), refetchInterval: 30_000 });
   const health = useQuery({ queryKey: ["health"], queryFn: () => client.health(), refetchInterval: 15_000 });
   const repos = useQuery({ queryKey: ["repos"], queryFn: () => client.listRepos(), refetchInterval: 60_000 });
@@ -23,6 +24,8 @@ export default function CommandCenter() {
   const chainLen = audit.data?.chain_length ?? 0;
   const components = health.data?.components ?? [];
   const embeddingsOn = s?.embeddings_enabled ?? false;
+  const cfg = config.data;
+  const needsSetup = cfg ? !cfg.onboarding_completed && !cfg.configured : false;
 
   return (
     <div className="mx-auto max-w-[1080px]">
@@ -30,6 +33,21 @@ export default function CommandCenter() {
         title="Command Center"
         actions={<Btn primary href="/repositories">+ Add repo</Btn>}
       />
+
+      {needsSetup && (
+        <div className="mb-4 flex items-center gap-3 rounded-xl border border-border2 bg-accentSoft px-4 py-3.5">
+          <Sparkles size={18} className="flex-none text-accentInk" />
+          <div>
+            <div className="text-[14px] font-semibold text-accentInk">Welcome — finish setup</div>
+            <div className="text-[12.5px] text-muted2">
+              Generate your access key and connect an agent to get started.
+            </div>
+          </div>
+          <Btn primary href="/setup" className="ml-auto">
+            Start setup →
+          </Btn>
+        </div>
+      )}
 
       {!dismissed && (
         <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-[#f3e2c0] bg-warnSoft px-3.5 py-2.5 text-[13px] text-[#8a5a00]">

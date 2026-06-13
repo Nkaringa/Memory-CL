@@ -21,9 +21,11 @@ from typing import Any
 import httpx
 
 from sdk.types import (
+    AppConfigView,
     ExploreResult,
     FindSymbolResult,
     IngestResult,
+    KeyResult,
     McpToolResult,
     QueryGraphResult,
     ReadUnitResult,
@@ -287,6 +289,35 @@ class AsyncMemoryClient:
     async def verify_audit_chain(self) -> dict[str, Any]:
         body = await self._get_json("/audit/verify")
         return dict(body)
+
+    # ----- config / onboarding -----
+    async def get_config(self) -> AppConfigView:
+        """GET /config — onboarding state (unauthenticated, never raw keys)."""
+        return AppConfigView.model_validate(await self._get_json("/config"))
+
+    async def generate_mcp_key(self) -> KeyResult:
+        """POST /config/mcp-key/generate — generate + store the MCP key once."""
+        return KeyResult.model_validate(
+            await self._post_json("/config/mcp-key/generate", {})
+        )
+
+    async def rotate_mcp_key(self) -> KeyResult:
+        """POST /config/mcp-key/rotate — replace the current MCP key."""
+        return KeyResult.model_validate(
+            await self._post_json("/config/mcp-key/rotate", {})
+        )
+
+    async def set_openai_key(self, key: str | None) -> None:
+        """POST /config/openai-key — set or clear the OpenAI API key."""
+        await self._post_json("/config/openai-key", {"api_key": key})
+
+    async def set_embedding_mode(self, mode: str) -> None:
+        """POST /config/embedding-mode — 'openai' | 'local'."""
+        await self._post_json("/config/embedding-mode", {"mode": mode})
+
+    async def complete_onboarding(self) -> None:
+        """POST /config/complete-onboarding — mark wizard finished."""
+        await self._post_json("/config/complete-onboarding", {})
 
     # ----- internal HTTP plumbing -----
     def _request_id_headers(self) -> dict[str, str]:

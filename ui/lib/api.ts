@@ -7,8 +7,11 @@
  */
 
 import type {
+  AppConfig,
   AuditTailResponse,
   AuditVerifyResponse,
+  EmbeddingMode,
+  McpKeyResponse,
   IngestRequest,
   IngestResponse,
   McpToolList,
@@ -166,6 +169,35 @@ export class AsyncMemoryClient {
 
   auditVerify(): Promise<AuditVerifyResponse> {
     return this.get<AuditVerifyResponse>("/audit/verify");
+  }
+
+  // ------ config / onboarding ---------------------------------------------
+  /** Onboarding + key state. Unauthenticated — the wizard needs it pre-key. */
+  getConfig(): Promise<AppConfig> {
+    return this.get<AppConfig>("/config");
+  }
+
+  /** Generate the first MCP key. The raw key is returned ONCE — copy it now. */
+  generateMcpKey(): Promise<McpKeyResponse> {
+    return this.post<McpKeyResponse>("/config/mcp-key/generate", {});
+  }
+
+  /** Rotate the MCP key (requires the current key). Agents must re-add. */
+  rotateMcpKey(): Promise<McpKeyResponse> {
+    return this.post<McpKeyResponse>("/config/mcp-key/rotate", {});
+  }
+
+  /** Set or clear (pass null) the OpenAI key. */
+  setOpenAiKey(apiKey: string | null): Promise<unknown> {
+    return this.post<unknown>("/config/openai-key", { api_key: apiKey });
+  }
+
+  setEmbeddingMode(mode: EmbeddingMode): Promise<unknown> {
+    return this.post<unknown>("/config/embedding-mode", { mode });
+  }
+
+  completeOnboarding(): Promise<unknown> {
+    return this.post<unknown>("/config/complete-onboarding", {});
   }
 
   // ------ internal HTTP plumbing ------------------------------------------
