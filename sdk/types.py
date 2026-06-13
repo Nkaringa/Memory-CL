@@ -92,3 +92,134 @@ class StatusResult(_SdkBase):
     boot_stages: list[dict[str, Any]]
     mcp_tool_count: int
     schema_version: str
+    # Phase-9.5 additions (older servers omit them — defaults keep us lenient).
+    embeddings_enabled: bool = False
+    feature_weights: dict[str, float] = {}
+
+
+# ---------------------------------------------------------------------------
+# v2 agent-first tool results (thin mirrors of /mcp/tools/* payloads)
+# ---------------------------------------------------------------------------
+class RepoSummary(_SdkBase):
+    repo_id: str
+    units: int
+    files: int
+    languages: list[str] = []
+
+
+class ReposResult(_SdkBase):
+    """GET /repos — every ingested repo with aggregate counts."""
+
+    schema_version: str = ""
+    repos: list[RepoSummary] = []
+
+
+class SearchHit(_SdkBase):
+    repo_id: str | None = None
+    qualified_name: str | None = None
+    kind: str | None = None
+    file_path: str | None = None
+    lines: str | None = None
+    score: float = 0.0
+    channels: list[str] = []
+    snippet: str = ""
+    snippet_truncated: bool = False
+
+
+class SearchCodeResult(_SdkBase):
+    results: list[SearchHit] = []
+    total_matches: int = 0
+    truncated: bool = False
+    hint: str | None = None
+    error: str | None = None
+    failed_repos: list[str] = []
+    valid_repo_ids: list[str] = []
+
+
+class ReadUnitResult(_SdkBase):
+    found: bool = False
+    unit_id: str | None = None
+    repo_id: str | None = None
+    qualified_name: str | None = None
+    kind: str | None = None
+    file_path: str | None = None
+    lines: str | None = None
+    language: str | None = None
+    signature: str | None = None
+    docstring: str | None = None
+    imports: list[str] = []
+    calls: list[str] = []
+    bases: list[str] = []
+    content: str = ""
+    truncated: bool = False
+    parent_chain: list[dict[str, str]] = []
+    # Miss path:
+    reference: str | None = None
+    suggestions: list[dict[str, str]] = []
+    hint: str | None = None
+    error: str | None = None
+    valid_repo_ids: list[str] = []
+
+
+class ExploreNeighbor(_SdkBase):
+    node_id: str | None = None
+    qualified_name: str | None = None
+    kind: str | None = None
+    file_path: str | None = None
+    lines: str | None = None
+    signature: str | None = None
+    snippet: str | None = None
+    distance: int = 1
+    relation: str = ""
+
+
+class ExploreResult(_SdkBase):
+    found: bool = False
+    seed: dict[str, Any] | None = None
+    direction: str = "all"
+    depth: int = 1
+    neighbors: list[ExploreNeighbor] = []
+    edges: list[dict[str, Any]] = []
+    truncated: bool = False
+    truncated_edges: bool = False
+    warning: str | None = None
+    # Miss path:
+    qualified_name: str | None = None
+    suggestions: list[dict[str, str]] = []
+    hint: str | None = None
+    error: str | None = None
+    valid_repo_ids: list[str] = []
+
+
+class SymbolMatch(_SdkBase):
+    repo_id: str | None = None
+    qualified_name: str
+    kind: str | None = None
+    file_path: str | None = None
+    lines: str | None = None
+    unit_id: str | None = None
+
+
+class FindSymbolResult(_SdkBase):
+    matches: list[SymbolMatch] = []
+    truncated: bool = False
+    hint: str | None = None
+    error: str | None = None
+    valid_repo_ids: list[str] = []
+
+
+class RepoOverviewResult(_SdkBase):
+    found: bool = False
+    repo_id: str | None = None
+    units: int = 0
+    files: int = 0
+    languages: dict[str, int] = {}
+    unit_kinds: dict[str, int] = {}
+    module_tree: list[dict[str, Any]] = []
+    largest_modules: list[dict[str, Any]] = []
+    most_connected: list[dict[str, Any]] = []
+    doc_files: list[str] = []
+    note: str | None = None
+    hint: str | None = None
+    error: str | None = None
+    valid_repo_ids: list[str] = []
