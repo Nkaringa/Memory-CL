@@ -210,8 +210,20 @@ def build_native_mcp_server(
 # Helpers
 # ---------------------------------------------------------------------------
 def _to_protocol_tool(reg_tool: Any) -> Tool:
-    """Translate a Memory-CL ``Tool`` (Protocol) into an MCP ``Tool``."""
-    description = (reg_tool.__class__.__doc__ or reg_tool.name).strip().splitlines()[0]
+    """Translate a Memory-CL ``Tool`` (Protocol) into an MCP ``Tool``.
+
+    Description precedence (kept identical to the REST listing in
+    ``apps/mcp/router.py``): the tool's explicit agent-facing
+    ``description`` attribute, else the class docstring's first line,
+    else the tool name.
+    """
+    explicit = getattr(reg_tool, "description", None)
+    if isinstance(explicit, str) and explicit.strip():
+        description = explicit.strip()
+    else:
+        description = (
+            (reg_tool.__class__.__doc__ or reg_tool.name).strip().splitlines()[0]
+        )
     schema = reg_tool.request_schema.model_json_schema()
     return Tool(
         name=reg_tool.name,

@@ -44,13 +44,24 @@ class ExecutionContext:
 
 @runtime_checkable
 class Tool(Protocol):
-    """Tools are pure orchestration wrappers around Phase 2-4 systems."""
+    """Tools are pure orchestration wrappers around Phase 2-4 systems.
+
+    `request` is typed `Any` at the Protocol boundary on purpose:
+    concrete tools narrow it to their own request schema (which the
+    executor guarantees via `validate_tool_request` before dispatch),
+    and a `BaseModel` parameter type would make every narrowing tool
+    fail the Protocol's contravariance check.
+    """
 
     name: str
-    request_schema: type[BaseModel]
+
+    # Read-only property (not a mutable attribute) so concrete tools can
+    # declare a NARROWER schema class without tripping invariance.
+    @property
+    def request_schema(self) -> type[BaseModel]: ...
 
     async def execute(
-        self, request: BaseModel, ctx: ExecutionContext
+        self, request: Any, ctx: ExecutionContext
     ) -> dict[str, Any]: ...
 
 

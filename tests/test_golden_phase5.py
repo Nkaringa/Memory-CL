@@ -104,17 +104,47 @@ class _PgEngine:
         yield self.conn
 
 
+def _seed_row() -> dict[str, Any]:
+    """Full ingestion_units row for the explore/search seed resolution."""
+    from datetime import UTC, datetime
+
+    return {
+        "unit_id": "seed-uid", "repo_id": "acme", "commit_sha": "c",
+        "kind": "fn", "name": "add", "qualified_name": "pkg.utils.add",
+        "parent_qualified_name": "pkg.utils", "file_path": "pkg/utils.py",
+        "language": "python", "line_start": 1, "line_end": 3,
+        "content": "def add(a, b):\n    return a + b\n", "source_sha": "s",
+        "docstring": None, "signature": "def add(a, b)",
+        "imports": [], "calls": [], "references": [], "bases": [],
+        "token_count": 0, "schema_version": "1",
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "source": "memory-cl", "checksum": None,
+    }
+
+
 def _state_after_ingest(qdrant: _FakeQdrant, neighbors: list[GraphNode]):
     """Build an AppState whose stores reflect the ingested fixture."""
-    pg_engine = _PgEngine(rows=[{"unit_id": "seed-uid"}])
+    from storage.repositories import RepoSummary
+
+    pg_engine = _PgEngine(rows=[_seed_row()])
     graph_repo = AsyncMock()
     graph_repo.neighbors = AsyncMock(return_value=neighbors)
+    graph_repo.edges_among = AsyncMock(return_value=[
+        ("seed-uid", "CALLS", n.node_id) for n in neighbors
+    ])
+    units_repo = AsyncMock()
+    units_repo.list_repos = AsyncMock(return_value=[
+        RepoSummary(repo_id="acme", units=10, files=3, languages=("python",)),
+    ])
+    units_repo.get_unit = AsyncMock(return_value=None)
+    units_repo.search_qnames = AsyncMock(return_value=[])
     return SimpleNamespace(
         postgres=SimpleNamespace(engine=pg_engine),
         qdrant=SimpleNamespace(client=qdrant),
         neo4j=AsyncMock(),
         redis=SimpleNamespace(client=AsyncMock()),
-        units_repo=AsyncMock(),
+        units_repo=units_repo,
         graph_repo=graph_repo,
         vector_repo=AsyncMock(),
         embedder=DeterministicEmbedder(dimension=32),
@@ -188,31 +218,45 @@ async def test_phase5_golden_full_mcp_roundtrip(tmp_path: Path) -> None:
     app = _build_app(state)
 
     with TestClient(app) as client:
-        # 1. tool listing exposes all 7 tools
+        # 1. tool listing exposes the full v2 surface (7 v2 + 4 kept +
+        #    3 deprecated aliases) with agent-facing descriptions
         listing = client.get("/mcp/tools").json()
         assert sorted(t["name"] for t in listing["tools"]) == [
-            "get_context", "get_module_summary", "get_related_components",
-            "get_risks", "ingest_repository", "query_graph", "update_memory",
+            "explore", "find_symbol", "get_context", "get_module_summary",
+            "get_related_components", "get_risks", "ingest_repository",
+            "list_repos", "query_graph", "read_file", "read_unit",
+            "repo_overview", "search_code", "update_memory",
         ]
+        assert all(t["description"] for t in listing["tools"])
 
-        # 2. get_context is deterministic across two identical calls
-        body_a = client.post("/mcp/tools/get_context", json={
-            "task": "auth flow", "repo_id": "acme", "top_k": 5,
+        # 2. search_code (and its get_context alias) is deterministic
+        #    across two identical calls
+        body_a = client.post("/mcp/tools/search_code", json={
+            "question": "auth flow", "repo_id": "acme", "top_k": 5,
         }).json()
         body_b = client.post("/mcp/tools/get_context", json={
             "task": "auth flow", "repo_id": "acme", "top_k": 5,
         }).json()
         assert body_a["status"] == "success"
+        assert body_b["data"].pop("deprecated") == "use search_code"
         assert body_a["data"] == body_b["data"]
-        assert body_a["data"]["packet"]["task"] == "auth flow"
+        assert body_a["data"]["results"], "fixture repo must produce hits"
 
-        # 3. query_graph against a qname seed surfaces the helper neighbor
-        graph_body = client.post("/mcp/tools/query_graph", json={
-            "node": "pkg.utils.add", "repo_id": "acme", "depth": 2,
+        # 3. explore (and its query_graph alias) against a qname seed
+        #    surfaces the helper neighbor with self-contained fields
+        graph_body = client.post("/mcp/tools/explore", json={
+            "qualified_name": "pkg.utils.add", "repo_id": "acme", "depth": 2,
         }).json()
         assert graph_body["status"] == "success"
-        assert any(c["unit_id"] == "u-helper"
-                   for c in graph_body["data"]["candidates"])
+        assert graph_body["data"]["seed"]["qualified_name"] == "pkg.utils.add"
+        assert any(n["qualified_name"] == "pkg.utils.helper"
+                   for n in graph_body["data"]["neighbors"])
+        alias_body = client.post("/mcp/tools/query_graph", json={
+            "node": "pkg.utils.add", "repo_id": "acme", "depth": 2,
+        }).json()
+        assert alias_body["data"]["deprecated"] == "use explore"
+        assert any(n["qualified_name"] == "pkg.utils.helper"
+                   for n in alias_body["data"]["neighbors"])
 
         # 4. validation failures are in-band, not 4xx
         bad = client.post("/mcp/tools/get_context", json={

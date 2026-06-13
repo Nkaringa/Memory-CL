@@ -1,10 +1,17 @@
 from core.mcp.schemas.tool_request import (
+    ExploreRequest,
+    FindSymbolRequest,
     GetContextRequest,
     GetModuleSummaryRequest,
     GetRelatedComponentsRequest,
     GetRisksRequest,
     IngestRepositoryRequest,
+    ListReposRequest,
     QueryGraphRequest,
+    ReadFileRequest,
+    ReadUnitRequest,
+    RepoOverviewRequest,
+    SearchCodeRequest,
     UpdateMemoryRequest,
 )
 from core.mcp.schemas.tool_response import (
@@ -14,12 +21,19 @@ from core.mcp.schemas.tool_response import (
 )
 
 __all__ = [
+    "ExploreRequest",
+    "FindSymbolRequest",
     "GetContextRequest",
     "GetModuleSummaryRequest",
     "GetRelatedComponentsRequest",
     "GetRisksRequest",
     "IngestRepositoryRequest",
+    "ListReposRequest",
     "QueryGraphRequest",
+    "ReadFileRequest",
+    "ReadUnitRequest",
+    "RepoOverviewRequest",
+    "SearchCodeRequest",
     "ToolErrorCode",
     "ToolResponse",
     "ToolStatus",

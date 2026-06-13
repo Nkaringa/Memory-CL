@@ -23,6 +23,14 @@ def _key(repo_id: str, session_id: str) -> str:
 
 class UpdateMemoryTool:
     name: str = "update_memory"
+    description: str = (
+        "MUTATES STATE — appends one JSON entry to your session's "
+        "memory (Redis-backed, append-only, TTL-bound), e.g. "
+        "update_memory(session_id='s1', repo_id='memory-cl', "
+        "session_data={'finding': 'auth lives in core/auth'}). Use to "
+        "persist working notes across calls in one session. It does NOT "
+        "modify ingested code or indexes, and there is no delete."
+    )
     request_schema = UpdateMemoryRequest
 
     async def execute(

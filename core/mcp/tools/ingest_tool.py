@@ -49,6 +49,16 @@ def _build_embedding_components(
 
 class IngestRepositoryTool:
     name: str = "ingest_repository"
+    description: str = (
+        "MUTATES STATE — parses a repository from the server's local "
+        "filesystem and writes units, graph nodes/edges, and vectors "
+        "into all three stores, e.g. ingest_repository(path='/srv/repos/"
+        "myrepo', repo_id='myrepo'). Slow on large repos and re-ingests "
+        "overwrite changed units. Only call when the user explicitly "
+        "asks to ingest/re-ingest; never as part of answering a "
+        "question. `path` must exist on the SERVER host, not your "
+        "machine."
+    )
     request_schema = IngestRepositoryRequest
 
     async def execute(
