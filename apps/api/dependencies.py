@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from apps.api.state import AppState
+from core.config_runtime import RuntimeConfig
 from storage import Neo4jClient, PostgresClient, QdrantStorageClient, RedisClient
 
 
@@ -17,6 +18,24 @@ def get_app_state(request: Request) -> AppState:
 
 
 AppStateDep = Annotated[AppState, Depends(get_app_state)]
+
+
+def get_runtime_config(request: Request) -> RuntimeConfig:
+    """The runtime config (Postgres-over-env) attached during lifespan.
+
+    Raises if missing — the config router + embedder paths require it.
+    Auth (`apps.mcp.auth`) reads it defensively via `getattr` so test
+    apps without it fall back to env; this strict accessor is for the
+    surfaces that are only ever mounted under the full lifespan.
+    """
+    runtime = getattr(request.app.state, "runtime_config", None)
+    if runtime is None:
+        raise RuntimeError("RuntimeConfig not initialized — lifespan did not run")
+    assert isinstance(runtime, RuntimeConfig)
+    return runtime
+
+
+RuntimeConfigDep = Annotated[RuntimeConfig, Depends(get_runtime_config)]
 
 
 def get_postgres(state: AppStateDep) -> PostgresClient:

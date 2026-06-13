@@ -16,10 +16,12 @@ from sdk.client import (
     MemoryClientError,
 )
 from sdk.types import (
+    AppConfigView,
     ExploreNeighbor,
     ExploreResult,
     FindSymbolResult,
     IngestResult,
+    KeyResult,
     McpToolResult,
     QueryGraphResult,
     ReadUnitResult,
@@ -37,11 +39,13 @@ from sdk.types import (
 )
 
 __all__ = [
+    "AppConfigView",
     "AsyncMemoryClient",
     "ExploreNeighbor",
     "ExploreResult",
     "FindSymbolResult",
     "IngestResult",
+    "KeyResult",
     "McpToolResult",
     "MemoryClientError",
     "QueryGraphResult",

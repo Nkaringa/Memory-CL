@@ -223,3 +223,23 @@ class RepoOverviewResult(_SdkBase):
     hint: str | None = None
     error: str | None = None
     valid_repo_ids: list[str] = []
+
+
+# ---------------------------------------------------------------------------
+# Phase-10 config / onboarding types
+# ---------------------------------------------------------------------------
+class AppConfigView(_SdkBase):
+    """GET /config response — onboarding state, never contains raw keys."""
+
+    configured: bool
+    onboarding_completed: bool
+    embedding_mode: str
+    embeddings_enabled: bool
+    has_openai_key: bool
+    mcp_key_hint: str | None = None
+
+
+class KeyResult(_SdkBase):
+    """POST /config/mcp-key/generate or rotate — the one-time key reveal."""
+
+    api_key: str

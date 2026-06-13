@@ -157,7 +157,7 @@ def test_ingest_embeds_units_when_embeddings_enabled(
     monkeypatch.setattr(
         ingest_router,
         "_build_embedding_components",
-        lambda state, settings: (fake_pipe, fake_embedder),
+        lambda state, settings, runtime=None: (fake_pipe, fake_embedder),
     )
     state = _make_state()
     app = _build_app(state)
@@ -229,7 +229,7 @@ def test_reembed_happy_path_batches_and_counts(
     monkeypatch.setattr(
         ingest_router,
         "_build_embedding_components",
-        lambda state, settings: (fake_pipe, fake_embedder),
+        lambda state, settings, runtime=None: (fake_pipe, fake_embedder),
     )
     monkeypatch.setattr(ingest_router, "_REEMBED_BATCH_SIZE", 2)
 
@@ -265,7 +265,7 @@ def test_reembed_continues_past_batch_failure(
     monkeypatch.setattr(
         ingest_router,
         "_build_embedding_components",
-        lambda state, settings: (fake_pipe, fake_embedder),
+        lambda state, settings, runtime=None: (fake_pipe, fake_embedder),
     )
     monkeypatch.setattr(ingest_router, "_REEMBED_BATCH_SIZE", 2)
 
@@ -310,7 +310,7 @@ async def test_reembed_concurrent_same_repo_returns_409(
     monkeypatch.setattr(
         ingest_router,
         "_build_embedding_components",
-        lambda state, settings: (_BlockingPipeline(), fake_embedder),
+        lambda state, settings, runtime=None: (_BlockingPipeline(), fake_embedder),
     )
     state = _make_state()
     state.units_repo.list_units_for_repo = AsyncMock(  # type: ignore[method-assign]
@@ -444,7 +444,7 @@ def test_reembed_accepts_correct_api_key(
     monkeypatch.setattr(
         ingest_router,
         "_build_embedding_components",
-        lambda state, settings: (fake_pipe, fake_embedder),
+        lambda state, settings, runtime=None: (fake_pipe, fake_embedder),
     )
     state = _make_state()
     state.units_repo.list_units_for_repo = AsyncMock(  # type: ignore[method-assign]
@@ -474,7 +474,7 @@ def test_reembed_allows_keyless_request_in_dev_mode(
     monkeypatch.setattr(
         ingest_router,
         "_build_embedding_components",
-        lambda state, settings: (fake_pipe, fake_embedder),
+        lambda state, settings, runtime=None: (fake_pipe, fake_embedder),
     )
     state = _make_state()
     state.units_repo.list_units_for_repo = AsyncMock(  # type: ignore[method-assign]

@@ -1,3 +1,4 @@
+from storage.app_config_repo import AppConfigRepository, AppConfigRow
 from storage.base import StorageClient, StorageHealth
 from storage.neo4j import Neo4jClient
 from storage.neo4j_repo import EdgeNotAllowed, Neo4jGraphRepository
@@ -17,6 +18,8 @@ from storage.repositories import (
 )
 
 __all__ = [
+    "AppConfigRepository",
+    "AppConfigRow",
     "EdgeNotAllowed",
     "GraphRepository",
     "IngestionUnitRepository",

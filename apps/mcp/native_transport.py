@@ -21,7 +21,7 @@ leaves it on shutdown alongside the rest of the infrastructure.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -43,12 +43,19 @@ def attach_native_mcp(
     *,
     registry: ToolRegistry,
     executor: ToolExecutor,
+    get_runtime_config: Callable[[], Any] | None = None,
 ) -> NativeMcpHandle:
     """Mount native MCP transports on the running FastAPI app.
 
     The returned handle exposes the streamable-HTTP session manager's
     async context — callers integrate it into their own lifespan to
     guarantee clean teardown.
+
+    `get_runtime_config` (optional) lets the ASGI auth middleware resolve
+    the MCP key from `RuntimeConfig` (Postgres-over-env) so a key
+    set/rotated at runtime is enforced on the native transports too. When
+    omitted, the middleware falls back to env Settings — the pre-onboarding
+    behavior.
     """
     server = build_native_mcp_server(
         registry=registry,
@@ -60,10 +67,22 @@ def attach_native_mcp(
     http_app, http_session_manager = _build_streamable_http_transport(server)
 
     app.router.routes.append(
-        Mount(MCP_SSE_PATH, app=McpApiKeyMiddleware(sse_app), name="mcp-sse"),
+        Mount(
+            MCP_SSE_PATH,
+            app=McpApiKeyMiddleware(
+                sse_app, get_runtime_config=get_runtime_config
+            ),
+            name="mcp-sse",
+        ),
     )
     app.router.routes.append(
-        Mount(MCP_HTTP_PATH, app=McpApiKeyMiddleware(http_app), name="mcp-http"),
+        Mount(
+            MCP_HTTP_PATH,
+            app=McpApiKeyMiddleware(
+                http_app, get_runtime_config=get_runtime_config
+            ),
+            name="mcp-http",
+        ),
     )
 
     return NativeMcpHandle(

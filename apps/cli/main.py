@@ -577,6 +577,184 @@ async def _cmd_graph_legacy(
 
 
 # ---------------------------------------------------------------------------
+# setup / key / config-set commands
+# ---------------------------------------------------------------------------
+def _print_connect_command(ui: UI, base_url: str, api_key: str) -> None:
+    """Print the pre-filled claude mcp add command."""
+    cmd = (
+        f'claude mcp add --transport sse --scope user memory-cl '
+        f'{base_url}/mcp/sse --header "X-API-Key: {api_key}"'
+    )
+    ui.out.print(f"\n[bold]Run this to connect Claude:[/bold]\n  {cmd}\n")
+
+
+async def _cmd_setup(
+    client: AsyncMemoryClient, args: argparse.Namespace, ui: UI,
+    settings: CliSettings,
+) -> int:
+    """Interactive first-run wizard."""
+    cfg = await client.get_config()
+    base_url = settings.base_url_value
+
+    if cfg.configured:
+        # Already set up — show hint and how to get the connect command.
+        if _json_mode(args):
+            _emit({"configured": True, "mcp_key_hint": cfg.mcp_key_hint})
+            return 0
+        ui.out.print(
+            f"[green]Already set up[/green] — your key is [bold]{cfg.mcp_key_hint}[/bold]. "
+            "Use [bold]memcl key rotate[/bold] to replace it."
+        )
+        _print_connect_command(ui, base_url, cfg.mcp_key_hint or "(key hidden)")
+        return 0
+
+    # --- Step 1: generate key ---
+    ui.out.print("[bold]Step 1/3[/bold] — Generating MCP access key …")
+    key_res = await client.generate_mcp_key()
+    api_key = key_res.api_key
+
+    # Save to config file (write_config_file preserves existing base_url / timeout).
+    write_config_file(
+        base_url=base_url,
+        api_key=api_key,
+        timeout=settings.timeout_value,
+    )
+    ui.out.print(
+        f"\n[bold green]Your MCP key:[/bold green] [bold]{api_key}[/bold]\n"
+        f"[dim]Saved to {config_path()} — keep it secret.[/dim]\n"
+    )
+
+    # --- Step 2: OpenAI key (optional) ---
+    ui.out.print("[bold]Step 2/3[/bold] — Embeddings (optional)")
+    openai_key: str = ""
+    if sys.stdin.isatty():
+        from rich.prompt import Prompt
+        openai_key = Prompt.ask(
+            "OpenAI API key (sk-…) [dim]empty to skip[/dim]",
+            default="",
+            console=ui.err,
+        )
+    if openai_key.strip():
+        await client.set_openai_key(openai_key.strip())
+        await client.set_embedding_mode("openai")
+        ui.out.print("[green]✓[/green] OpenAI key saved — semantic search enabled.")
+    else:
+        ui.out.print(
+            "[dim]Skipped — add one later with: "
+            "memcl config set openai-key <sk-…>[/dim]"
+        )
+
+    # --- Step 3: connect command ---
+    ui.out.print("\n[bold]Step 3/3[/bold] — Connect your agent")
+    _print_connect_command(ui, base_url, api_key)
+    ui.out.print(
+        "\n[dim]Next step:[/dim] [bold]memcl ingest <path>[/bold]"
+    )
+
+    await client.complete_onboarding()
+    if _json_mode(args):
+        _emit({"configured": True, "api_key": api_key})
+    return 0
+
+
+async def _cmd_key_generate(
+    client: AsyncMemoryClient, args: argparse.Namespace, ui: UI,
+    settings: CliSettings,
+) -> int:
+    """Generate the MCP key (only valid when unconfigured)."""
+    try:
+        key_res = await client.generate_mcp_key()
+    except MemoryClientError as exc:
+        if exc.status_code in (401, 409):
+            if _json_mode(args):
+                _emit_error({"error": "already_configured", "status_code": exc.status_code})
+            else:
+                ui.error(
+                    "A key is already configured — use [bold]memcl key rotate[/bold] "
+                    "to replace it."
+                )
+            return 1
+        raise
+    api_key = key_res.api_key
+    write_config_file(
+        base_url=settings.base_url_value,
+        api_key=api_key,
+        timeout=settings.timeout_value,
+    )
+    if _json_mode(args):
+        _emit({"api_key": api_key})
+        return 0
+    ui.out.print(
+        f"[bold green]MCP key:[/bold green] [bold]{api_key}[/bold]\n"
+        f"[dim]Saved to {config_path()}[/dim]"
+    )
+    return 0
+
+
+async def _cmd_key_show(
+    client: AsyncMemoryClient, args: argparse.Namespace, ui: UI,
+    settings: CliSettings,
+) -> int:
+    """Print the masked key hint from GET /config."""
+    cfg = await client.get_config()
+    if not cfg.configured:
+        if _json_mode(args):
+            _emit({"configured": False, "mcp_key_hint": None})
+        else:
+            ui.error("No key configured yet — run: memcl setup")
+        return 1
+    if _json_mode(args):
+        _emit({"configured": True, "mcp_key_hint": cfg.mcp_key_hint})
+        return 0
+    ui.out.print(f"MCP key: [bold]{cfg.mcp_key_hint}[/bold]")
+    ui.note("Use `memcl key rotate` to replace it.")
+    return 0
+
+
+async def _cmd_key_rotate(
+    client: AsyncMemoryClient, args: argparse.Namespace, ui: UI,
+    settings: CliSettings,
+) -> int:
+    """Rotate the MCP key (requires current key via config/env/flag)."""
+    key_res = await client.rotate_mcp_key()
+    api_key = key_res.api_key
+    write_config_file(
+        base_url=settings.base_url_value,
+        api_key=api_key,
+        timeout=settings.timeout_value,
+    )
+    if _json_mode(args):
+        _emit({"api_key": api_key})
+        return 0
+    ui.out.print(
+        f"[bold green]New MCP key:[/bold green] [bold]{api_key}[/bold]\n"
+        f"[dim]Saved to {config_path()}[/dim]"
+    )
+    _print_connect_command(ui, settings.base_url_value, api_key)
+    ui.out.print(
+        "[yellow]Warning:[/yellow] agents that already added memory-cl must "
+        "re-add it with the new key."
+    )
+    return 0
+
+
+async def _cmd_config_set_openai_key(
+    client: AsyncMemoryClient, args: argparse.Namespace, ui: UI,
+    settings: CliSettings,
+) -> int:
+    """POST /config/openai-key — set the OpenAI API key server-side."""
+    key: str = args.openai_key
+    await client.set_openai_key(key)
+    masked = _mask_key(key)
+    if _json_mode(args):
+        _emit({"ok": True, "hint": masked})
+        return 0
+    ui.out.print(f"[green]✓[/green] OpenAI key set: [bold]{masked}[/bold]")
+    ui.note("Embedding mode is unchanged — use `memcl config set embedding-mode openai` to enable.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # config (no client needed)
 # ---------------------------------------------------------------------------
 def _mask_key(value: str | None) -> str:
@@ -820,6 +998,38 @@ def build_parser() -> argparse.ArgumentParser:
     config_sub.add_parser(
         "show", parents=[common], help="effective config and where it came from",
     )
+    p_config_set = config_sub.add_parser(
+        "set", parents=[common], help="set a server-side config value",
+    )
+    config_set_sub = p_config_set.add_subparsers(
+        dest="config_set_key", required=True,
+    )
+    p_set_openai = config_set_sub.add_parser(
+        "openai-key", parents=[common], help="set the OpenAI API key on the server",
+    )
+    p_set_openai.add_argument("openai_key", help="the key (sk-…)")
+    p_set_openai.set_defaults(func=_cmd_config_set_openai_key)
+
+    p_setup = sub.add_parser(
+        "setup", parents=[common],
+        help="first-run wizard — generate key, set embeddings, print connect command",
+    )
+    p_setup.set_defaults(func=_cmd_setup)
+
+    p_key = sub.add_parser(
+        "key", parents=[common],
+        help="manage the MCP access key (generate / show / rotate)",
+    )
+    key_sub = p_key.add_subparsers(dest="key_cmd", required=True)
+    key_sub.add_parser(
+        "generate", parents=[common], help="generate a new key (fresh install only)",
+    ).set_defaults(func=_cmd_key_generate)
+    key_sub.add_parser(
+        "show", parents=[common], help="print the masked key hint",
+    ).set_defaults(func=_cmd_key_show)
+    key_sub.add_parser(
+        "rotate", parents=[common], help="replace the current key (re-add required)",
+    ).set_defaults(func=_cmd_key_rotate)
 
     # ---- deprecated v1 subcommands (hidden from --help) ----
     p_query = sub.add_parser("query", parents=[common])
@@ -871,11 +1081,15 @@ async def _dispatch(args: argparse.Namespace) -> int:
         return 1
 
     if args.command == "config":
-        try:
-            return _cmd_config(args, ui, settings)
-        except (OSError, ValueError) as exc:
-            ui.error(str(exc))
-            return 1
+        # "config set *" sub-subcommands need the async client.
+        if getattr(args, "config_cmd", None) == "set" and hasattr(args, "func"):
+            pass  # fall through to async dispatch below
+        else:
+            try:
+                return _cmd_config(args, ui, settings)
+            except (OSError, ValueError) as exc:
+                ui.error(str(exc))
+                return 1
 
     timeout = settings.timeout_value
     if args.command == "ingest" and settings.timeout.source == "default":
