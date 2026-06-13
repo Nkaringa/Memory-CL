@@ -28,6 +28,7 @@ Quick links: [Glossary](26_GLOSSARY.md) · [API reference](07_API_REFERENCE.md) 
 
 ### Foundation
 - [01 — Overview](01_OVERVIEW.md) · what the system is, mental model, invariants
+- [27 — Feature Matrix](27_FEATURE_MATRIX.md) · every feature × audience tier, with verified maturity labels
 - [02 — Architecture](02_ARCHITECTURE.md) · layers, dependency rules, phase mapping
 - [03 — Data Flow](03_DATA_FLOW.md) · ingest / retrieve / MCP request lifecycles
 - [25 — Design Decisions](25_DESIGN_DECISIONS.md) · why this shape
