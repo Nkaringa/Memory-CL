@@ -543,6 +543,76 @@ async def test_explore_no_neighbors_hints_next_steps() -> None:
     assert "hint" in resp.data
 
 
+@pytest.mark.asyncio
+async def test_explore_edges_exclude_filtered_out_nodes() -> None:
+    """Edges to direction-filtered-out neighbors must not appear in `edges`."""
+    seed = _unit("pkg.m.seedfn", unit_id="u-seed")
+    callee = _unit("pkg.m.callee", unit_id="u-callee",
+                   content="def callee():\n    pass\n")
+    caller = _unit("pkg.m.caller", unit_id="u-caller",
+                   content="def caller():\n    seedfn()\n")
+    state = _state(
+        routes={"qname": _qname_route(seed)},
+        units=[seed, callee, caller],
+        neighbors=[
+            _gnode("u-callee", "pkg.m.callee"),
+            _gnode("u-caller", "pkg.m.caller"),
+        ],
+        edges=[
+            ("u-seed", "CALLS", "u-callee"),
+            ("u-caller", "CALLS", "u-seed"),
+        ],
+    )
+    # direction=callees → only u-callee is kept; u-caller is filtered out.
+    # The u-caller→u-seed edge must NOT appear because u-caller is cut.
+    resp = await _run(state, "explore",
+                      {"qualified_name": "pkg.m.seedfn", "repo_id": "acme",
+                       "direction": "callees"})
+    assert resp.status.value == "success"
+    edge_pairs = {(e["src_id"], e["dst_id"]) for e in resp.data["edges"]}
+    assert ("u-caller", "u-seed") not in edge_pairs
+    assert ("u-seed", "u-callee") in edge_pairs
+    assert resp.data.get("truncated_edges") is False
+
+
+@pytest.mark.asyncio
+async def test_explore_truncated_edges_flag_fires() -> None:
+    """When more than 200 edges survive the endpoint filter, truncated_edges=True.
+
+    Use a fully-connected graph of 21 nodes (seed + 20 peers): that gives
+    21*20/2 = 210 undirected edges, all among kept nodes → truncated_edges=True
+    after the 200-edge cap.
+    """
+    seed = _unit("pkg.m.hub", unit_id="u-seed")
+    peer_units = [
+        _unit(f"pkg.m.peer{i:02d}", unit_id=f"u-p{i:02d}") for i in range(20)
+    ]
+    peer_gnodes = [_gnode(u.unit_id, u.qualified_name) for u in peer_units]
+    # All-pairs edges among seed + 20 peers (direction "all" keeps all).
+    all_ids = ["u-seed"] + [u.unit_id for u in peer_units]
+    dense_edges = [
+        (all_ids[i], "CALLS", all_ids[j])
+        for i in range(len(all_ids))
+        for j in range(i + 1, len(all_ids))
+    ]  # 21*20/2 = 210 edges
+
+    state = _state(
+        routes={"qname": _qname_route(seed)},
+        units=[seed, *peer_units],
+        neighbors=peer_gnodes,
+        edges=dense_edges,
+    )
+    resp = await _run(state, "explore",
+                      {"qualified_name": "pkg.m.hub", "repo_id": "acme",
+                       "direction": "all"})
+    assert resp.status.value == "success"
+    # All 20 peers kept (< 50 cap); 210 raw edges all survive endpoint filter
+    # → capped at 200, truncated_edges=True.
+    assert len(resp.data["neighbors"]) == 20
+    assert len(resp.data["edges"]) == 200
+    assert resp.data["truncated_edges"] is True
+
+
 # ============================================================================
 #                               find_symbol
 # ============================================================================

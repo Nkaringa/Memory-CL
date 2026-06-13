@@ -194,6 +194,19 @@ async def _explore_impl(
         key=lambda n: (n["distance"], n["qualified_name"] or "")
     )
 
+    # Build the set of node IDs that are actually in the returned neighbor
+    # list (post-cap, post-direction-filter) plus the seed itself.
+    kept_ids: set[str] = {seed.unit_id} | {n["node_id"] for n in neighbors}
+
+    # Keep only edges whose BOTH endpoints are in kept_ids, then cap.
+    _MAX_EDGES = 200
+    filtered_edges = [
+        (s, k, d) for s, k, d in sorted(edges)
+        if s in kept_ids and d in kept_ids
+    ]
+    truncated_edges = len(filtered_edges) > _MAX_EDGES
+    filtered_edges = filtered_edges[:_MAX_EDGES]
+
     out: dict[str, Any] = {
         "found": True,
         "seed": {
@@ -207,9 +220,10 @@ async def _explore_impl(
         "depth": depth,
         "neighbors": neighbors,
         "edges": [
-            {"src_id": s, "kind": k, "dst_id": d} for s, k, d in sorted(edges)
+            {"src_id": s, "kind": k, "dst_id": d} for s, k, d in filtered_edges
         ],
         "truncated": truncated,
+        "truncated_edges": truncated_edges,
     }
     if warning:
         out["warning"] = warning
