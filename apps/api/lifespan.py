@@ -15,8 +15,10 @@ from core import (
     start_observability,
 )
 from core.config import Settings
+from core.config_runtime import RuntimeConfig
 from core.embeddings import Embedder, OpenAIEmbedder
 from storage import (
+    AppConfigRepository,
     Neo4jClient,
     Neo4jGraphRepository,
     PostgresClient,
@@ -29,21 +31,31 @@ from storage import (
 _log = get_logger(__name__)
 
 
-def _build_query_embedder(settings: Settings) -> Embedder | None:
+def _build_query_embedder(runtime: RuntimeConfig) -> Embedder | None:
     """Query-side embedder matching the document-side (ingest) embedder.
 
     Phase-3 ingestion embeds documents with `OpenAIEmbedder` whenever
-    `embeddings_enabled` — query vectors must come from the SAME model
+    embeddings are enabled — query vectors must come from the SAME model
     or cosine scores against the stored vectors are noise. Returns None
     when embeddings are disabled so `AppState.with_default_embedder`
     falls back to the deterministic embedder.
+
+    Reads key + mode from `RuntimeConfig` (Postgres-over-env) instead of
+    Settings directly. `embedding_mode == 'local'` is Phase 2 — until the
+    local embedder lands, 'local' resolves to no embedder (placeholder).
     """
-    if not settings.embeddings_enabled:
+    if not runtime.embeddings_enabled():
         return None
-    assert settings.openai_api_key is not None  # embeddings_enabled guarantees it
+    if runtime.embedding_mode() == "local":
+        # Phase-2 local embedder not built yet — fall back to the
+        # deterministic placeholder rather than constructing OpenAI.
+        _log.info("embedder_local_mode_phase2_placeholder")
+        return None
+    api_key = runtime.openai_api_key()
+    assert api_key is not None  # embeddings_enabled() guarantees it
     return OpenAIEmbedder(
-        api_key=settings.openai_api_key.get_secret_value(),
-        model=settings.embedding_model,
+        api_key=api_key,
+        model=runtime.embedding_model(),
         # 1536-dim — matches the ingest-side collections (_DEFAULT_VECTOR_SIZE).
         dimension=1536,
     )
@@ -64,7 +76,15 @@ async def _close_embedder(embedder: object) -> None:
         _log.warning("embedder_close_error", error=str(exc))
 
 
-def _build_state() -> AppState:
+def _build_state() -> tuple[AppState, AppConfigRepository, RuntimeConfig]:
+    """Build the AppState plus the runtime-config plumbing.
+
+    The embedder is wired with the deterministic fallback here and
+    upgraded to the model-backed one in `lifespan` AFTER storage connects
+    and `RuntimeConfig.refresh()` has loaded the persisted keys — the
+    embedder choice depends on the resolved (Postgres-over-env) key, which
+    isn't readable until the engine exists.
+    """
     settings = get_settings()
     pg = PostgresClient(settings.postgres_url)
     qd = QdrantStorageClient(settings.qdrant_url)
@@ -74,7 +94,9 @@ def _build_state() -> AppState:
         settings.neo4j_password.get_secret_value(),
     )
     rd = RedisClient(settings.redis_url)
-    return AppState.with_default_embedder(
+    app_config_repo = AppConfigRepository(engine_proxy(pg))
+    runtime = RuntimeConfig(app_config_repo, settings)
+    state = AppState.with_default_embedder(
         postgres=pg,
         qdrant=qd,
         neo4j=nj,
@@ -84,8 +106,45 @@ def _build_state() -> AppState:
         units_repo=PostgresIngestionRepository(engine_proxy(pg)),
         graph_repo=Neo4jGraphRepository(driver_proxy(nj)),
         vector_repo=QdrantVectorRepository(client_proxy(qd)),
-        embedder=_build_query_embedder(settings),
+        embedder=None,  # deterministic fallback; upgraded post-refresh
     )
+    return state, app_config_repo, runtime
+
+
+async def _seed_app_config_from_env(
+    repo: AppConfigRepository, settings: Settings,
+) -> bool:
+    """Carry the LIVE VM's env keys into `app_config` on first boot.
+
+    NON-BREAKING / no-lockout: when the row is empty/absent AND env has
+    MCP_API_KEY and/or OPENAI_API_KEY, seed Postgres from env so the
+    existing deployment's keys become the runtime source of truth without
+    any operator action. Idempotent: seeds ONLY when `app_config` is
+    empty, so a configured row is never overwritten. Returns True if it
+    wrote a seed row.
+    """
+    existing = await repo.get()
+    if existing is not None:
+        return False  # already has a config row — never overwrite
+
+    mcp = settings.mcp_api_key
+    openai = settings.openai_api_key
+    mcp_val = mcp.get_secret_value() if (mcp and mcp.get_secret_value().strip()) else None
+    openai_val = (
+        openai.get_secret_value()
+        if (openai and openai.get_secret_value().strip())
+        else None
+    )
+    if mcp_val is None and openai_val is None:
+        return False  # nothing to seed — stays fully env-driven (no row)
+
+    await repo.upsert(mcp_api_key=mcp_val, openai_api_key=openai_val)
+    _log.info(
+        "app_config_seeded_from_env",
+        seeded_mcp_key=mcp_val is not None,
+        seeded_openai_key=openai_val is not None,
+    )
+    return True
 
 
 # The four `*_proxy` helpers below exist because the underlying drivers
@@ -137,8 +196,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         otlp_endpoint=settings.otel_exporter_otlp_endpoint,
     )
 
-    state = _build_state()
+    state, app_config_repo, runtime = _build_state()
     app.state.app_state = state
+    # Runtime config (Postgres-over-env). Auth + embedder read this.
+    # The snapshot is loaded below, AFTER storage connects.
+    app.state.runtime_config = runtime
     # Build the MCP tool registry once per process — it's stateless,
     # so cloning it across requests would just waste memory.
     from apps.mcp.registry import build_default_registry
@@ -164,6 +226,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # endpoint since they need a configured embedding dimension.
         await state.units_repo.ensure_schema()
         await state.graph_repo.ensure_constraints()
+        # Runtime-config table + seed-on-first-boot + snapshot load. Done
+        # before auth/embedder are consulted: the seed carries the LIVE
+        # VM's env keys into app_config so the deployment keeps working
+        # (no lockout, embeddings stay on), and refresh() populates the
+        # snapshot the sync auth dependency reads.
+        await app_config_repo.ensure_schema()
+        await _seed_app_config_from_env(app_config_repo, settings)
+        await runtime.refresh()
+        # Upgrade the deterministic placeholder embedder to the
+        # model-backed one when the RESOLVED (Postgres-over-env) config
+        # enables embeddings. Built here (not in _build_state) because the
+        # resolved key isn't readable until the engine + snapshot exist.
+        query_embedder = _build_query_embedder(runtime)
+        if query_embedder is not None:
+            state.embedder = query_embedder
+        _log.info(
+            "runtime_config_loaded",
+            configured=runtime.configured(),
+            embeddings_enabled=runtime.embeddings_enabled(),
+            embedding_mode=runtime.embedding_mode(),
+        )
 
         # Phase-9 boot orchestration runs the deterministic 8-stage
         # health gate. On failure under strict_bootstrap, we flip the
@@ -203,6 +286,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 app,
                 registry=app.state.mcp_registry,
                 executor=ToolExecutor(app.state.mcp_registry),
+                # Native transports re-implement auth as ASGI middleware
+                # (they don't get FastAPI deps). Hand it the same
+                # RuntimeConfig the REST dependency uses so a rotated key
+                # is enforced on /mcp/sse + /mcp/http too.
+                get_runtime_config=lambda: getattr(
+                    app.state, "runtime_config", None
+                ),
             )
             app.state.native_mcp = native_handle
             _log.info(

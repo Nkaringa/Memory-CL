@@ -44,6 +44,7 @@ from core.parsing import DocParser, FileWalker, PythonParser, TreeSitterParser
 from core.retrieval.graph_retriever import GraphRetriever
 from schemas import IngestionUnit, Language, stable_unit_id
 from storage import (
+    AppConfigRepository,
     Neo4jClient,
     Neo4jGraphRepository,
     PostgresClient,
@@ -583,3 +584,86 @@ async def test_golden_docs_repo_roundtrip(stores: Stores) -> None:
         assert await _neo4j_counts(stores, repo_id) == (nodes, edges)
     finally:
         await _cleanup(stores, repo_id, collection)
+
+
+# ---------------------------------------------------------------------------
+# app_config runtime-config table — bootstrap + seed-from-env (no-lockout)
+# ---------------------------------------------------------------------------
+async def test_golden_app_config_bootstrap_and_roundtrip(stores: Stores) -> None:
+    """The app_config table bootstraps on real Postgres and the BOOLEAN +
+    TIMESTAMPTZ CAST discipline survives a real asyncpg round-trip (the
+    same class of bug the unit count tests catch for ingestion_units)."""
+    repo = AppConfigRepository(stores.postgres.engine)
+    try:
+        await repo.ensure_schema()  # idempotent
+        await repo.ensure_schema()  # second call must be a no-op
+
+        # Empty on a fresh table (cleaned in finally).
+        async with stores.postgres.engine.begin() as conn:
+            await conn.execute(text("DELETE FROM app_config"))
+        assert await repo.get() is None
+
+        # Upsert with a BOOLEAN true + TIMESTAMPTZ stamp — exercises the
+        # CTE CAST path end to end.
+        row = await repo.upsert(
+            mcp_api_key="golden-mcp-key",
+            openai_api_key="sk-golden",
+            embedding_mode="openai",
+            onboarding_completed=True,
+        )
+        assert row.mcp_api_key == "golden-mcp-key"
+        assert row.onboarding_completed is True
+        assert row.updated_at is not None
+
+        fetched = await repo.get()
+        assert fetched is not None
+        assert fetched.openai_api_key == "sk-golden"
+        assert fetched.onboarding_completed is True
+
+        # Single-row invariant: a second upsert updates, never inserts a
+        # second row.
+        await repo.set_mcp_api_key("rotated-key")
+        async with stores.postgres.engine.connect() as conn:
+            count = await conn.execute(text("SELECT COUNT(*) FROM app_config"))
+            assert int(count.scalar_one()) == 1
+        again = await repo.get()
+        assert again is not None
+        assert again.mcp_api_key == "rotated-key"
+        assert again.openai_api_key == "sk-golden"  # preserved across upsert
+    finally:
+        async with stores.postgres.engine.begin() as conn:
+            await conn.execute(text("DELETE FROM app_config"))
+
+
+async def test_golden_seed_from_env_is_idempotent(stores: Stores) -> None:
+    """The seed-on-first-boot path against real Postgres: empty table +
+    env keys → seeded; a second seed (or any populated row) → never
+    overwritten. This is the no-lockout guarantee for the live VM."""
+    from apps.api.lifespan import _seed_app_config_from_env
+    from core.config import Settings
+
+    repo = AppConfigRepository(stores.postgres.engine)
+    try:
+        await repo.ensure_schema()
+        async with stores.postgres.engine.begin() as conn:
+            await conn.execute(text("DELETE FROM app_config"))
+
+        settings = Settings(mcp_api_key="live-env-key", openai_api_key="sk-live-env")  # type: ignore[arg-type]
+        seeded = await _seed_app_config_from_env(repo, settings)
+        assert seeded is True
+        row = await repo.get()
+        assert row is not None
+        assert row.mcp_api_key == "live-env-key"
+        assert row.openai_api_key == "sk-live-env"
+
+        # Second boot: row exists → seed is a no-op, env does NOT clobber a
+        # subsequently-rotated key.
+        await repo.set_mcp_api_key("operator-rotated")
+        seeded_again = await _seed_app_config_from_env(repo, settings)
+        assert seeded_again is False
+        final = await repo.get()
+        assert final is not None
+        assert final.mcp_api_key == "operator-rotated"
+    finally:
+        async with stores.postgres.engine.begin() as conn:
+            await conn.execute(text("DELETE FROM app_config"))

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.dependencies import AppStateDep
@@ -10,6 +10,7 @@ from apps.api.state import AppState
 from apps.mcp.auth import ApiKeyDep
 from core import get_settings
 from core.config import Settings
+from core.config_runtime import RuntimeConfig
 from core.embeddings import ChunkingStrategy, EmbeddingPipeline, OpenAIEmbedder
 from core.ingestion import IngestionPipeline, make_context
 
@@ -65,20 +66,42 @@ class ReembedResponse(BaseModel):
 
 
 def _build_embedding_components(
-    state: AppState, settings: Settings
+    state: AppState,
+    settings: Settings,
+    runtime: RuntimeConfig | None = None,
 ) -> tuple[EmbeddingPipeline, OpenAIEmbedder] | None:
     """Construct the Phase-3 embedding stack, or None when disabled.
 
     Returned as a (pipeline, embedder) pair so callers can `aclose()`
     the embedder's HTTP client after the request. Module-level function
     (not a closure) so tests can monkeypatch it with a fake pipeline.
+
+    When `runtime` is supplied (the production path), the enable
+    decision, OpenAI key, and embedding model are resolved from
+    `RuntimeConfig` (Postgres-over-env) — so a key set/cleared at runtime
+    takes effect on the next ingest without a restart. When `runtime` is
+    None (legacy / test path), it reads straight from `settings`, the
+    exact pre-onboarding behavior. `embedding_mode == 'local'` is Phase 2:
+    until the local embedder lands it disables embeddings (placeholder).
     """
-    if not settings.embeddings_enabled:
-        return None
-    assert settings.openai_api_key is not None  # embeddings_enabled guarantees it
+    if runtime is not None:
+        if not runtime.embeddings_enabled():
+            return None
+        if runtime.embedding_mode() == "local":
+            return None  # Phase-2 local embedder not built yet
+        api_key = runtime.openai_api_key()
+        assert api_key is not None  # embeddings_enabled() guarantees it
+        embedding_model = runtime.embedding_model()
+    else:
+        if not settings.embeddings_enabled:
+            return None
+        assert settings.openai_api_key is not None  # guaranteed by enabled
+        api_key = settings.openai_api_key.get_secret_value()
+        embedding_model = settings.embedding_model
+
     embedder = OpenAIEmbedder(
-        api_key=settings.openai_api_key.get_secret_value(),
-        model=settings.embedding_model,
+        api_key=api_key,
+        model=embedding_model,
         dimension=_DEFAULT_VECTOR_SIZE,
     )
     pipeline = EmbeddingPipeline(
@@ -99,6 +122,7 @@ def _build_embedding_components(
 )
 async def ingest_repo(
     req: IngestRequest,
+    request: Request,
     state: AppStateDep,
     api_key: ApiKeyDep,  # auth enforced here, same dependency as /mcp/tools
 ) -> IngestResponse:
@@ -137,7 +161,8 @@ async def ingest_repo(
         graph_repo=state.graph_repo,
         vector_repo=state.vector_repo,
     )
-    components = _build_embedding_components(state, get_settings())
+    runtime = getattr(request.app.state, "runtime_config", None)
+    components = _build_embedding_components(state, get_settings(), runtime)
     try:
         result = await IngestionPipeline(
             embedding_pipeline=components[0] if components else None,
@@ -161,6 +186,7 @@ async def ingest_repo(
 )
 async def reembed_repo(
     req: ReembedRequest,
+    request: Request,
     state: AppStateDep,
     api_key: ApiKeyDep,  # auth enforced here — reembed spends provider money
 ) -> ReembedResponse:
@@ -173,7 +199,12 @@ async def reembed_repo(
     may be in flight at a time — concurrent requests get a 409.
     """
     settings = get_settings()
-    if not settings.embeddings_enabled:
+    runtime = getattr(request.app.state, "runtime_config", None)
+    embeddings_on = (
+        runtime.embeddings_enabled() if runtime is not None
+        else settings.embeddings_enabled
+    )
+    if not embeddings_on:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="embeddings are disabled — set OPENAI_API_KEY to enable reembed",
@@ -188,7 +219,7 @@ async def reembed_repo(
         )
     _REEMBED_IN_FLIGHT.add(req.repo_id)
     try:
-        components = _build_embedding_components(state, settings)
+        components = _build_embedding_components(state, settings, runtime)
         assert components is not None  # embeddings_enabled checked above
         pipeline, embedder = components
 

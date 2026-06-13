@@ -1,40 +1,81 @@
 """AppState / lifespan query-embedder wiring (ranking Defect A).
 
 The query-side embedder must live in the same vector space as the
-document-side embedder used at ingest. When embeddings are enabled
-(OPENAI_API_KEY configured) the AppState must carry an OpenAIEmbedder;
-otherwise the deterministic fallback. No OpenAI request is made here —
-constructing the embedder only builds an httpx client.
+document-side embedder used at ingest. When embeddings are enabled the
+query embedder must be an OpenAIEmbedder; otherwise None (the lifespan
+then falls back to the deterministic embedder). No OpenAI request is made
+here — constructing the embedder only builds an httpx client.
+
+Phase-1 onboarding moved the embedder DECISION onto `RuntimeConfig`
+(Postgres-over-env): `_build_query_embedder(runtime)` resolves the key +
+mode, and the lifespan upgrades the deterministic placeholder AFTER the
+runtime snapshot loads. `_build_state()` itself now always returns the
+deterministic fallback (it runs before storage connects), so the tests
+exercise the real `_build_query_embedder` seam directly.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
-import pytest
-
-from apps.api.lifespan import _build_state, _close_embedder
+from apps.api.lifespan import _build_query_embedder, _build_state, _close_embedder
+from core.config import Settings
+from core.config_runtime import RuntimeConfig
 from core.embeddings import DeterministicEmbedder, OpenAIEmbedder
+from storage.app_config_repo import AppConfigRow
 
 
-async def test_build_state_wires_openai_embedder_when_embeddings_enabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
-    state = _build_state()
-    try:
-        assert isinstance(state.embedder, OpenAIEmbedder)
-        # Must match the ingest-side collection dimension.
-        assert state.embedder.dimension == 1536
-    finally:
-        await state.embedder.aclose()
+class _FakeAppConfigRepo:
+    def __init__(self, row: AppConfigRow | None) -> None:
+        self._row = row
+
+    async def get(self) -> AppConfigRow | None:
+        return self._row
 
 
-def test_build_state_falls_back_to_deterministic_when_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    state = _build_state()
+def _row(**kw: object) -> AppConfigRow:
+    base = {
+        "id": 1, "mcp_api_key": None, "openai_api_key": None,
+        "embedding_mode": "openai", "embedding_model": None,
+        "onboarding_completed": False, "updated_at": datetime.now(UTC),
+    }
+    base.update(kw)
+    return AppConfigRow(**base)  # type: ignore[arg-type]
+
+
+async def _runtime(row: AppConfigRow | None, settings: Settings) -> RuntimeConfig:
+    rc = RuntimeConfig(_FakeAppConfigRepo(row), settings)  # type: ignore[arg-type]
+    await rc.refresh()
+    return rc
+
+
+async def test_query_embedder_is_openai_when_embeddings_enabled() -> None:
+    rc = await _runtime(_row(openai_api_key="sk-test-not-a-real-key"), Settings())
+    embedder = _build_query_embedder(rc)
+    assert isinstance(embedder, OpenAIEmbedder)
+    # Must match the ingest-side collection dimension.
+    assert embedder.dimension == 1536
+    await embedder.aclose()
+
+
+async def test_query_embedder_none_when_disabled() -> None:
+    rc = await _runtime(_row(), Settings(openai_api_key=None))
+    assert _build_query_embedder(rc) is None
+
+
+async def test_query_embedder_none_for_local_mode_phase2() -> None:
+    """'local' mode is Phase 2 — no embedder is built even if a key exists."""
+    rc = await _runtime(
+        _row(openai_api_key="sk-x", embedding_mode="local"), Settings()
+    )
+    assert _build_query_embedder(rc) is None
+
+
+def test_build_state_returns_deterministic_placeholder_embedder() -> None:
+    """`_build_state` runs before storage connects, so it always wires the
+    deterministic fallback; the lifespan upgrades it post-refresh."""
+    state, _repo, _runtime_cfg = _build_state()
     assert isinstance(state.embedder, DeterministicEmbedder)
 
 

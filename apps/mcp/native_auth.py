@@ -20,21 +20,54 @@ keeps auth localized and lets us add scopes per-transport later.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core import get_settings
+
+if TYPE_CHECKING:
+    from core.config_runtime import RuntimeConfig
 
 # Header name we accept in priority order. Values arrive lower-cased.
 _HEADER_X_API_KEY = b"x-api-key"
 _HEADER_AUTHORIZATION = b"authorization"
 
 
+def _resolve_expected_key(
+    get_runtime_config: Callable[[], RuntimeConfig | None] | None,
+) -> str | None:
+    """Resolve the expected MCP key from RuntimeConfig when available.
+
+    Mirrors `apps.mcp.auth.require_mcp_api_key`: prefer the runtime config
+    (Postgres-over-env) so a key set/rotated at runtime is enforced here
+    too. Falls back to the env Settings value when no RuntimeConfig is
+    wired (e.g. native server mounted outside the API lifespan) — the
+    EXACT pre-onboarding behavior, so nothing breaks.
+    """
+    if get_runtime_config is not None:
+        runtime = get_runtime_config()
+        if runtime is not None:
+            return runtime.mcp_api_key()
+    settings = get_settings()
+    expected = settings.mcp_api_key
+    if expected is None or not expected.get_secret_value().strip():
+        return None
+    return expected.get_secret_value()
+
+
 class McpApiKeyMiddleware:
     """Wrap any ASGI app with the same key-or-Bearer rule as REST MCP."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        get_runtime_config: Callable[[], RuntimeConfig | None] | None = None,
+    ) -> None:
         self.app = app
+        self._get_runtime_config = get_runtime_config
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         # Health/non-HTTP scopes pass through unchanged.
@@ -42,9 +75,8 @@ class McpApiKeyMiddleware:
             await self.app(scope, receive, send)
             return
 
-        settings = get_settings()
-        expected = settings.mcp_api_key
-        if expected is None or not expected.get_secret_value():
+        expected = _resolve_expected_key(self._get_runtime_config)
+        if expected is None:
             # Dev mode — same as the REST dependency. No auth enforced.
             await self.app(scope, receive, send)
             return
@@ -53,7 +85,7 @@ class McpApiKeyMiddleware:
         if presented is None:
             await _respond_401(send, "missing API key")
             return
-        if presented != expected.get_secret_value():
+        if presented != expected:
             await _respond_401(send, "invalid API key")
             return
 
