@@ -103,15 +103,16 @@ class RuntimeConfig:
         return None
 
     def embedding_mode(self) -> str:
-        """'openai' | 'local'. Runtime value if set, else 'openai' default.
+        """'openai' | 'local'. Runtime value if set, else the mode default.
 
-        (There is no env equivalent for the mode — it is a Phase-1
-        runtime-only setting. The column defaults to 'openai'.)
+        Lite deployments default to 'local' (on-device embeddings, no key);
+        server defaults to 'openai'. A persisted app_config value always
+        wins over the default.
         """
         row = self._snapshot()
         if row is not None and row.embedding_mode:
             return row.embedding_mode
-        return "openai"
+        return "local" if self._settings.mode == "lite" else "openai"
 
     def embedding_model(self) -> str:
         """Runtime override if set, else env Settings.embedding_model."""

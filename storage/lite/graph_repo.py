@@ -109,6 +109,11 @@ class LiteGraphRepository:
             for stmt in _DDL:
                 await conn.execute(text(stmt))
 
+    async def ensure_constraints(self) -> None:
+        """Alias so the lifespan's `graph_repo.ensure_constraints()` (a
+        Neo4j-ism) works unchanged in lite mode."""
+        await self.ensure_schema()
+
     # ----- Writes -----
     async def upsert_node(self, node: GraphNode) -> None:
         async with self._engine.begin() as conn:
