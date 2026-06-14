@@ -100,6 +100,29 @@ class Settings(BaseSettings):
     # Window (days) over which usage signals are summed.
     lifecycle_usage_window_days: int = Field(default=14, gt=0, le=365)
 
+    # ----- Freshness (Phase 3) -----
+    # Master switch for auto-reingest. When false, no watcher/poller starts
+    # and ingestion stays fully manual.
+    freshness_enabled: bool = True
+    # Local-repo filesystem watcher (debounced reingest on file change).
+    freshness_watch_enabled: bool = True
+    # How often the managed-repo poller checks each tracked branch for new
+    # commits (git fetch + reingest on move). A few minutes is plenty for
+    # code memory; sub-minute would just hammer git for no benefit.
+    freshness_poll_interval_seconds: int = Field(default=180, gt=0, le=86_400)
+    # Quiet window the watcher waits after a burst of edits before reingest.
+    freshness_debounce_ms: int = Field(default=3000, gt=0, le=600_000)
+    # Force watchfiles to poll instead of using inotify — needed on some
+    # network/overlay filesystems where native events don't propagate.
+    freshness_force_polling: bool = False
+    # Writable workspace where managed (git-cloned) repos live.
+    managed_repos_root: str = Field(default="/managed", min_length=1)
+    # Root the local-repo watcher observes (the read-only mounted code).
+    local_repos_root: str = Field(default="/repos", min_length=1)
+    # Optional token for cloning/pulling PRIVATE managed repos (injected
+    # into the https clone URL; the clean URL is what's persisted).
+    github_token: SecretStr | None = Field(default=None)
+
     # ----- Distributed scale (Phase 7) -----
     # Worker pool concurrency for distributed ingestion / retrieval.
     scale_worker_count: int = Field(default=4, gt=0, le=64)
