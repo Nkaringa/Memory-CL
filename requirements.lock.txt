@@ -79,6 +79,10 @@ argon2-cffi==25.1.0
 argon2-cffi-bindings==25.1.0
 itsdangerous==2.2.0
 
+# --- Email validation (required by pydantic EmailStr in auth schemas) -------
+email-validator==2.3.0
+dnspython==2.8.0
+
 # --- Build-tooling shipped to runtime --------------------------------------
 # `python:3.12-slim` does NOT ship setuptools/wheel as installed
 # packages, but `opentelemetry-instrumentation-fastapi` (and a few of
