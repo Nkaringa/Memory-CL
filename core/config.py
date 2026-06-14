@@ -143,6 +143,15 @@ class Settings(BaseSettings):
     scale_batch_max_size: int = Field(default=32, gt=0, le=1024)
     scale_batch_max_wait_ms: int = Field(default=20, gt=0, le=10_000)
 
+    # ----- Deployment mode (lite vs server) -----
+    # 'server' = the Docker stack (Postgres/Neo4j/Qdrant/Redis). 'lite' =
+    # embedded in-process backends (SQLite/numpy/python) under lite_data_dir —
+    # no Docker, `pip install` + `memcl serve`. Default 'server' so existing
+    # deployments + tests are unaffected.
+    mode: Literal["server", "lite"] = "server"
+    # Where lite mode keeps its SQLite db + model cache. '~' is expanded.
+    lite_data_dir: str = Field(default="~/.memcl", min_length=1)
+
     # ----- Production deployment (Phase 9) -----
     environment: Literal["development", "staging", "production"] = "development"
     # If true, mutating endpoints (/ingest, /retrieve writes) return 503.
