@@ -162,9 +162,21 @@ async def assert_repo_access(
 
     # Allow privileged principals to ingest/create a brand-new repo (one that
     # isn't in org_repo_ids yet, so resolve_repo_access couldn't include it).
+    # SECURITY: only allow the escape hatch when the repo is genuinely new
+    # (not in the registry at all). If the repo is already registered to a
+    # DIFFERENT org, block it — otherwise an owner in org A could stamp their
+    # org_id over a repo that belongs to org B (cross-org write takeover).
     if level == "write":
         role = principal.roles[0] if principal.roles else ""
         if principal.kind == "agent" or role in ("owner", "admin"):
+            reg = getattr(request.app.state, "repo_registry", None)
+            if reg is not None:
+                row = await reg.get(repo_id)
+                if row is not None and row.org_id != principal.org_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"access denied: repo {repo_id!r} belongs to another org",
+                    )
             return
 
     raise HTTPException(

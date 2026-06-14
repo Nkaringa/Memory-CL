@@ -387,3 +387,96 @@ async def test_cross_org_repo_isolation(client_and_app, tmp_path: Path) -> None:
     assert retr_a.status_code != 403, (
         f"repoA (own repo) must not be blocked. Got {retr_a.status_code}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 6: cross-org WRITE takeover via the first-ingest escape hatch
+#
+# The gap: assert_repo_access has an escape hatch for owner/admin to ingest
+# a brand-new repo (one not yet in their access map). But it didn't check
+# whether the repo is ALREADY REGISTERED to a DIFFERENT ORG. A default-org
+# owner who knows another org's repo_id can POST /ingest {repo_id:'team-b-repo'}
+# → passes the escape hatch → re-stamps the repo's org_id to 'default'.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_cross_org_write_takeover_blocked(client_and_app, tmp_path: Path) -> None:
+    """A default-org owner must NOT be able to ingest into a repo registered to 'team-b'.
+
+    Setup:
+      1. Boot lite app. Configure auth. Register user → owner of org 'default'.
+      2. Directly insert repoB into repo_registry with org_id='team-b' (simulates
+         a second org's repo — same technique as test_cross_org_repo_isolation).
+      3. Also insert a minimal ingestion unit for repoB (same as existing test).
+      4. As default-org owner, POST /ingest {repo_id:'repoB', ...} → assert 403
+         (the escape hatch must check the registered org before allowing through).
+      5. As default-org owner, POST /ingest {repo_id:'brandNewRepo', ...} with a
+         real path → assert NOT 403 (genuine bootstrap of an unregistered repo
+         must still be allowed; the ingest may fail for other reasons but the
+         org-check must not block it).
+    """
+    client, app = client_and_app
+
+    # --- Step 1: configure auth + register owner (org 'default') ----------
+    gen = await client.post("/config/mcp-key/generate")
+    assert gen.status_code == 200
+    mcp_key = gen.json()["api_key"]
+
+    reg = await client.post(
+        "/auth/register",
+        json={"email": "owner@default.com", "password": "password123", "display_name": "Owner"},
+    )
+    assert reg.status_code == 200
+
+    # --- Step 2: inject repoB directly into repo_registry with org_id='team-b' ---
+    repo_registry = app.state.repo_registry
+    await repo_registry.upsert_local(
+        repo_id="repoB", repo_path="/fake/repoB", commit_sha=None, org_id="team-b"
+    )
+
+    # --- Step 3: insert a minimal unit for repoB so it exists in units_repo ---
+    from sqlalchemy import text as sa_text
+    app_state = app.state.app_state
+    engine = app_state.units_repo._engine
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa_text(
+                "INSERT OR IGNORE INTO ingestion_units "
+                "(unit_id, repo_id, commit_sha, kind, name, qualified_name, "
+                " file_path, language, line_start, line_end, content, source_sha, "
+                " imports, calls, \"references\", bases, token_count, "
+                " schema_version, created_at, updated_at, source) "
+                "VALUES ('cccc-0000-0000-0000-000000000000', 'repoB', 'bbb', "
+                " 'function', 'fn', 'fake.fn', 'fake.py', 'python', 1, 1, "
+                " 'def fn(): pass', 'sha_fake', '[]', '[]', '[]', '[]', 4, "
+                " '1.0', datetime('now'), datetime('now'), 'local')"
+            )
+        )
+
+    # --- Step 4: default-org owner attempts to ingest team-b's repoB → 403 ---
+    # The escape hatch allowed this before the fix (repo not in owner's access
+    # map → owner/admin through without checking the registered org).
+    ingest_b = await client.post(
+        "/ingest",
+        json={"repo_id": "repoB", "repo_path": "/fake/repoB", "commit_sha": "ccc"},
+        headers={"X-API-Key": mcp_key},
+    )
+    assert ingest_b.status_code == 403, (
+        f"CROSS-ORG WRITE TAKEOVER: expected 403 when ingesting another org's repo, "
+        f"got {ingest_b.status_code}. The first-ingest escape hatch must check the "
+        f"registered org_id before allowing through."
+    )
+
+    # --- Step 5: genuine bootstrap — brand-new unregistered repo → NOT 403 ---
+    # Use a real directory so the path check in run_ingest doesn't 400 before
+    # the org check would matter; but we only care that it's not 403.
+    brand_new_path = _make_repo(tmp_path, "brandNewRepo")
+    ingest_new = await client.post(
+        "/ingest",
+        json={"repo_id": "brandNewRepo", "repo_path": str(brand_new_path), "commit_sha": "ddd"},
+        headers={"X-API-Key": mcp_key},
+    )
+    assert ingest_new.status_code != 403, (
+        f"Genuine first-ingest of an unregistered repo must NOT be blocked by the org check. "
+        f"Got {ingest_new.status_code}."
+    )
