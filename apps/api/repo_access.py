@@ -59,6 +59,7 @@ def _auth_configured(request: Request) -> bool:
 async def load_access_for_principal(
     principal: Principal,
     app_state,  # AppState — untyped to avoid circular import
+    request: Request | None = None,
 ) -> dict[str, str]:
     """Compute {repo_id: access_level} for the authenticated principal.
 
@@ -67,6 +68,12 @@ async def load_access_for_principal(
       - team_repo.team_ids_for_user() to enumerate team memberships
       - repo_grant_repo.list_for_subjects() to collect grants for user + teams
     Then delegates to `resolve_repo_access` for the canonical RBAC logic.
+
+    ``request`` is required in production so that ``repo_registry`` is read
+    from ``request.app.state.repo_registry`` (where the lifespan attaches it)
+    rather than from the ``AppState`` dataclass (which never holds it).  When
+    ``request`` is absent (legacy unit-test callers) the function falls back to
+    the old unfiltered ``units_repo.list_repos()`` path.
     """
     org_id = principal.org_id
     user_id = principal.user_id
@@ -77,10 +84,15 @@ async def load_access_for_principal(
     role = principal.roles[0] if principal.roles else "member"
 
     # All repo_ids owned by the principal's org — from the freshness registry.
-    # None-safe: test fixtures that omit repo_registry are treated as empty.
-    repo_registry = getattr(app_state, "repo_registry", None)
+    # The registry lives on request.app.state (attached by lifespan), NOT on the
+    # AppState dataclass.  Reading it from the dataclass always yields None,
+    # causing the fallback below to return every repo across all orgs (leak).
+    repo_registry = None
+    if request is not None:
+        repo_registry = getattr(request.app.state, "repo_registry", None)
     if repo_registry is None:
         # Fall back to units_repo listing if registry isn't wired
+        # (e.g. minimal test apps that don't run the full lifespan).
         summaries = await app_state.units_repo.list_repos()
         org_repo_ids: set[str] = {s.repo_id for s in summaries}
     else:
@@ -143,7 +155,7 @@ async def assert_repo_access(
     if not principal.is_authenticated:
         return
 
-    access = await load_access_for_principal(principal, app_state)
+    access = await load_access_for_principal(principal, app_state, request=request)
     permitted = accessible_repo_ids(access, need=level)
     if repo_id in permitted:
         return
@@ -177,6 +189,6 @@ async def filter_repos_for_principal(
     if not principal.is_authenticated:
         return repo_summaries
 
-    access = await load_access_for_principal(principal, app_state)
+    access = await load_access_for_principal(principal, app_state, request=request)
     permitted = accessible_repo_ids(access, need="read")
     return [s for s in repo_summaries if s.repo_id in permitted]

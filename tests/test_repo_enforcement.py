@@ -32,6 +32,20 @@ async def client(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+@pytest.fixture
+async def client_and_app(tmp_path, monkeypatch):
+    """Like `client`, but yields (AsyncClient, app) so tests can reach app.state."""
+    monkeypatch.setenv("MODE", "lite")
+    monkeypatch.setenv("LITE_DATA_DIR", str(tmp_path))
+    from core.config import get_settings
+    get_settings.cache_clear()
+    from apps.api.main import app
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+            yield c, app
+    get_settings.cache_clear()
+
+
 def _make_repo(tmp_path: Path, name: str = "repo") -> Path:
     d = tmp_path / name
     d.mkdir(parents=True, exist_ok=True)
@@ -257,3 +271,119 @@ async def test_member_with_read_grant_can_retrieve_not_ingest(
     # a valid MCP key, the key passes ApiKeyDep but RBAC still blocks with 403.
     # Without a valid key, ApiKeyDep blocks with 401. Both outcomes are correct.
     assert ingest2_r.status_code in (401, 403)
+
+
+# ---------------------------------------------------------------------------
+# Test 5: cross-org isolation — org-A owner must NOT see org-B's repos
+#
+# This test EXPOSES THE BUG: when repo_registry is read from app.state
+# (correct) vs app_state dataclass (wrong — always None → fallback lists
+# every repo across all orgs).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_cross_org_repo_isolation(client_and_app, tmp_path: Path) -> None:
+    """An owner in org 'default' must not see or access repos registered to 'team-b'.
+
+    Setup:
+      1. Boot lite app. Register user → owner of org 'default'.
+      2. Ingest repoA under the owner (lands in org 'default' registry).
+      3. Directly insert repoB into repo_registry with org_id='team-b' (simulates
+         a second org's repo without needing a full second-org user flow).
+      4. Also insert a minimal ingestion unit for repoB so units_repo.list_repos()
+         returns it — this is the condition that made the old fallback leak it.
+      5. Assert:
+         - GET /repos lists repoA but NOT repoB.
+         - POST /retrieve {repo_id:'repoB'} → 403 (not leaked to default-org owner).
+         - POST /retrieve {repo_id:'repoA'} → not 403 (own repo still accessible).
+    """
+    client, app = client_and_app
+
+    # --- Step 1: configure auth + register owner --------------------------
+    gen = await client.post("/config/mcp-key/generate")
+    assert gen.status_code == 200
+    mcp_key = gen.json()["api_key"]
+
+    reg = await client.post(
+        "/auth/register",
+        json={"email": "owner@a.com", "password": "password123", "display_name": "Owner"},
+    )
+    assert reg.status_code == 200
+
+    # --- Step 2: ingest repoA (registers it under org 'default') ----------
+    repo_a_path = _make_repo(tmp_path, "repoA")
+    ingest_r = await client.post(
+        "/ingest",
+        json={"repo_id": "repoA", "repo_path": str(repo_a_path), "commit_sha": "aaa"},
+        headers={"X-API-Key": mcp_key},
+    )
+    assert ingest_r.status_code == 200
+
+    # --- Step 3: inject repoB directly into repo_registry with org_id='team-b' ---
+    # This simulates a second organisation's repo existing in the same database.
+    repo_registry = app.state.repo_registry
+    await repo_registry.upsert_local(
+        repo_id="repoB", repo_path="/fake/repoB", commit_sha=None, org_id="team-b"
+    )
+
+    # --- Step 4: insert a minimal unit for repoB into units_repo so that
+    #     units_repo.list_repos() returns BOTH repos. This is the critical
+    #     condition: without org filtering, the fallback returns {repoA, repoB}
+    #     and the owner sees both. With correct filtering (from registry),
+    #     only repoA (org 'default') should be visible. ----------------------
+    #
+    # We write directly to the SQLite engine to avoid going through the full
+    # ingest pipeline (which would need a real checkout + embedder).
+    from sqlalchemy import text as sa_text
+    app_state = app.state.app_state
+    engine = app_state.units_repo._engine
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa_text(
+                "INSERT OR IGNORE INTO ingestion_units "
+                "(unit_id, repo_id, commit_sha, kind, name, qualified_name, "
+                " file_path, language, line_start, line_end, content, source_sha, "
+                " imports, calls, \"references\", bases, token_count, "
+                " schema_version, created_at, updated_at, source) "
+                "VALUES ('bbbb-0000-0000-0000-000000000000', 'repoB', 'bbb', "
+                " 'function', 'fn', 'fake.fn', 'fake.py', 'python', 1, 1, "
+                " 'def fn(): pass', 'sha_fake', '[]', '[]', '[]', '[]', 4, "
+                " '1.0', datetime('now'), datetime('now'), 'local')"
+            )
+        )
+
+    # Verify the unit was inserted so list_repos() sees repoB
+    repos_in_units = await app_state.units_repo.list_repos()
+    repo_ids_in_units = {r.repo_id for r in repos_in_units}
+    assert "repoB" in repo_ids_in_units, "Setup: repoB must be in units_repo for this test to be meaningful"
+    assert "repoA" in repo_ids_in_units
+
+    # --- Step 5: assert cross-org isolation holds ------------------------
+    # 5a. GET /repos should list repoA but NOT repoB
+    list_r = await client.get("/repos")
+    assert list_r.status_code == 200
+    listed_ids = [r["repo_id"] for r in list_r.json()["repos"]]
+    assert "repoA" in listed_ids, f"repoA missing from listing: {listed_ids}"
+    assert "repoB" not in listed_ids, (
+        f"CROSS-ORG LEAK: repoB (org=team-b) visible to default-org owner. "
+        f"Listed repos: {listed_ids}"
+    )
+
+    # 5b. POST /retrieve on repoB → 403 (blocked — not in owner's org)
+    retr_b = await client.post(
+        "/retrieve",
+        json={"text": "query", "repo_id": "repoB", "top_k": 5},
+    )
+    assert retr_b.status_code == 403, (
+        f"CROSS-ORG LEAK: expected 403 for repoB, got {retr_b.status_code}. "
+        "The registry must be read from request.app.state, not AppState dataclass."
+    )
+
+    # 5c. POST /retrieve on repoA → not 403 (own repo remains accessible)
+    retr_a = await client.post(
+        "/retrieve",
+        json={"text": "query", "repo_id": "repoA", "top_k": 5},
+    )
+    assert retr_a.status_code != 403, (
+        f"repoA (own repo) must not be blocked. Got {retr_a.status_code}"
+    )
