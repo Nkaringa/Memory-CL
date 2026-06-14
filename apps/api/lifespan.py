@@ -18,7 +18,9 @@ from core import (
 from core.config import Settings
 from core.config_runtime import RuntimeConfig
 from core.embeddings import Embedder
+from core.token_cache import TokenCache
 from storage import (
+    ApiTokenRepository,
     AppConfigRepository,
     Neo4jClient,
     Neo4jGraphRepository,
@@ -64,7 +66,7 @@ async def _close_embedder(embedder: object) -> None:
 
 
 def _build_state() -> tuple[
-    AppState, AppConfigRepository, RepoRegistryRepository, RuntimeConfig
+    AppState, AppConfigRepository, RepoRegistryRepository, RuntimeConfig, TokenCache
 ]:
     """Build the AppState plus the runtime-config + repo-registry plumbing.
 
@@ -85,6 +87,7 @@ def _build_state() -> tuple[
     rd = RedisClient(settings.redis_url)
     app_config_repo = AppConfigRepository(engine_proxy(pg))
     repo_registry = RepoRegistryRepository(engine_proxy(pg))
+    token_cache = TokenCache(ApiTokenRepository(engine_proxy(pg)))
     runtime = RuntimeConfig(app_config_repo, settings)
     state = AppState.with_default_embedder(
         postgres=pg,
@@ -98,7 +101,7 @@ def _build_state() -> tuple[
         vector_repo=QdrantVectorRepository(client_proxy(qd)),
         embedder=None,  # deterministic fallback; upgraded post-refresh
     )
-    return state, app_config_repo, repo_registry, runtime
+    return state, app_config_repo, repo_registry, runtime, token_cache
 
 
 async def _seed_app_config_from_env(
@@ -186,7 +189,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         otlp_endpoint=settings.otel_exporter_otlp_endpoint,
     )
 
-    state, app_config_repo, repo_registry, runtime = _build_state()
+    state, app_config_repo, repo_registry, runtime, token_cache = _build_state()
     app.state.app_state = state
     # Runtime config (Postgres-over-env). Auth + embedder read this.
     # The snapshot is loaded below, AFTER storage connects.
@@ -194,6 +197,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Repo registry (Phase 3 freshness). Endpoints + the watcher/poller
     # read it; schema ensured below alongside the other tables.
     app.state.repo_registry = repo_registry
+    # Named API tokens cache — auth (REST + native) reads this for O(1)
+    # validation. Loaded below after storage connects.
+    app.state.token_cache = token_cache
     # Freshness task handles — populated after boot, cancelled on shutdown.
     freshness_tasks: list[asyncio.Task[None]] = []
     # Build the MCP tool registry once per process — it's stateless,
@@ -228,8 +234,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # snapshot the sync auth dependency reads.
         await app_config_repo.ensure_schema()
         await repo_registry.ensure_schema()
+        await token_cache.repo.ensure_schema()
         await _seed_app_config_from_env(app_config_repo, settings)
         await runtime.refresh()
+        await token_cache.refresh()
         # Upgrade the deterministic placeholder embedder to the
         # model-backed one when the RESOLVED (Postgres-over-env) config
         # enables embeddings. Built here (not in _build_state) because the
@@ -289,6 +297,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 get_runtime_config=lambda: getattr(
                     app.state, "runtime_config", None
                 ),
+                # Native transports accept named tokens too — same cache the
+                # REST dependency reads.
+                get_token_cache=lambda: getattr(app.state, "token_cache", None),
             )
             app.state.native_mcp = native_handle
             _log.info(

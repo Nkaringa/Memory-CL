@@ -25,10 +25,12 @@ from typing import TYPE_CHECKING
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from apps.mcp.token_auth import auth_is_configured, credential_accepted
 from core import get_settings
 
 if TYPE_CHECKING:
     from core.config_runtime import RuntimeConfig
+    from core.token_cache import TokenCache
 
 # Header name we accept in priority order. Values arrive lower-cased.
 _HEADER_X_API_KEY = b"x-api-key"
@@ -65,9 +67,11 @@ class McpApiKeyMiddleware:
         app: ASGIApp,
         *,
         get_runtime_config: Callable[[], RuntimeConfig | None] | None = None,
+        get_token_cache: Callable[[], TokenCache | None] | None = None,
     ) -> None:
         self.app = app
         self._get_runtime_config = get_runtime_config
+        self._get_token_cache = get_token_cache
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         # Health/non-HTTP scopes pass through unchanged.
@@ -76,7 +80,10 @@ class McpApiKeyMiddleware:
             return
 
         expected = _resolve_expected_key(self._get_runtime_config)
-        if expected is None:
+        token_cache = (
+            self._get_token_cache() if self._get_token_cache is not None else None
+        )
+        if not auth_is_configured(expected, token_cache):
             # Dev mode — same as the REST dependency. No auth enforced.
             await self.app(scope, receive, send)
             return
@@ -85,7 +92,7 @@ class McpApiKeyMiddleware:
         if presented is None:
             await _respond_401(send, "missing API key")
             return
-        if presented != expected:
+        if not credential_accepted(presented, expected, token_cache):
             await _respond_401(send, "invalid API key")
             return
 
