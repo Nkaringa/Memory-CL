@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     mcp_api_key: SecretStr | None = Field(default=None)
     mcp_session_ttl_seconds: int = Field(default=3600, gt=0)
     session_ttl_seconds: int = Field(default=86400, gt=0)  # human browser session lifetime
+    oauth_state_secret: str = Field(default="")  # HMAC secret for OAuth state cookies
 
     # ----- Lifecycle (Phase 6) -----
     # Days without access before an entity is eligible for decay.

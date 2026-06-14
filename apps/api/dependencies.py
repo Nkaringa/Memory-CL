@@ -15,7 +15,8 @@ from storage import (
     RedisClient,
     RepoRegistryRepository,
 )
-from storage.repositories import MembershipRepository, OrgRepository, SessionRepository, UserRepository
+from core.auth.oauth_registry import OAuthRegistry
+from storage.repositories import AuthProviderRepository, FederatedIdentityRepository, MembershipRepository, OrgRepository, SessionRepository, UserRepository
 
 
 def get_app_state(request: Request) -> AppState:
@@ -130,3 +131,29 @@ UserRepoDep = Annotated[UserRepository, Depends(get_user_repo)]
 MembershipRepoDep = Annotated[MembershipRepository, Depends(get_membership_repo)]
 SessionRepoDep = Annotated[SessionRepository, Depends(get_session_repo)]
 SessionCacheDep = Annotated[SessionCache, Depends(get_session_cache)]
+
+
+def get_auth_provider_repo(state: AppStateDep) -> AuthProviderRepository:
+    if state.auth_provider_repo is None:
+        raise RuntimeError("AuthProviderRepository not initialized — lifespan did not run")
+    return state.auth_provider_repo
+
+
+def get_federated_identity_repo(state: AppStateDep) -> FederatedIdentityRepository:
+    if state.federated_identity_repo is None:
+        raise RuntimeError("FederatedIdentityRepository not initialized — lifespan did not run")
+    return state.federated_identity_repo
+
+
+def get_oauth_registry(request: Request) -> OAuthRegistry:
+    """The OAuthRegistry attached during lifespan (mirrors get_session_cache)."""
+    registry = getattr(request.app.state, "oauth_registry", None)
+    if registry is None:
+        raise RuntimeError("OAuthRegistry not initialized — lifespan did not run")
+    assert isinstance(registry, OAuthRegistry)
+    return registry
+
+
+AuthProviderRepoDep = Annotated[AuthProviderRepository, Depends(get_auth_provider_repo)]
+FederatedIdentityRepoDep = Annotated[FederatedIdentityRepository, Depends(get_federated_identity_repo)]
+OAuthRegistryDep = Annotated[OAuthRegistry, Depends(get_oauth_registry)]

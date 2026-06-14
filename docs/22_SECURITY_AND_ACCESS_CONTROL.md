@@ -51,6 +51,68 @@ Config-mutation endpoints (`/config/*`) accept an authenticated session **OR** t
 - **Team invitations + per-repo grants + fine-grained RBAC** — Phase 3. Roles exist in the
   schema but per-repo authorization is not yet enforced beyond the existing tenant gate.
 
+## Federated login (Phase 2)
+
+Operators can add one or more **OAuth / OIDC identity providers** (GitHub, Google,
+Microsoft, or any generic OIDC-compliant issuer) alongside local password login,
+without a restart.
+
+### Supported providers + runtime configuration
+
+Providers are configured at runtime in **Settings → Identity** (or via the
+`/config/auth/providers` API): supply a provider type, client-id, client-secret,
+optional discovery URL (for generic OIDC), and scopes. The OAuthRegistry
+rebuilds live — no restart required.
+
+Newly created providers start **disabled**. Enable a provider only after you have:
+1. Pasted the client-id and client-secret into the settings panel.
+2. Registered the callback URL at the identity provider:
+   `{origin}/api/auth/oauth/{provider_id}/callback`
+
+### Login flow + security
+
+`GET /auth/oauth/{id}/start` redirects the browser to the upstream provider.
+The provider redirects back to `GET /auth/oauth/{id}/callback`, where
+authlib validates the **state**, **nonce**, and **PKCE S256 code-verifier**.
+The handshake state is kept in a dedicated httpOnly cookie (`memcl_oauth`,
+managed by Starlette's `SessionMiddleware`) — separate from the identity
+cookie `memcl_session`.
+
+Client secrets are stored server-side and are **never returned by the API**
+(the provider list exposes only `has_secret: bool`).
+
+### Account linking by verified email
+
+On a successful callback:
+
+1. **Returning user** — a `(provider, subject)` pair already in
+   `federated_identities` → logged in immediately.
+2. **Existing user** — the provider's **verified** email matches an existing
+   user (local or federated) → the new federated identity is linked to that
+   user account and the session starts.
+3. **New user** — no match → a fresh user is created (first-ever user on the
+   instance becomes owner; subsequent users become members).
+
+Providers that do **not** return a verified email are **refused (400)**.
+GitHub is handled specially: Memory-CL fetches the verified primary email
+from the GitHub `/user/emails` endpoint and uses the numeric GitHub user ID
+as the OAuth subject.
+
+### New tables
+
+- **`auth_providers`** — per-provider config (type, client-id, scopes,
+  discovery URL, enabled flag). `client_secret` is stored server-side; only
+  `has_secret` is exposed via the API.
+- **`federated_identities`** — user ↔ provider binding with a UNIQUE
+  `(provider_id, subject)` constraint preventing duplicate linkage.
+
+### What is NOT in Phase 2
+
+**Team invitations, per-repo grants, and fine-grained RBAC** remain Phase 3.
+Roles continue to be org-level (`owner | admin | member | viewer`).
+
+---
+
 ## MCP API key
 
 `apps/mcp/auth.py::require_mcp_api_key` is the FastAPI dependency

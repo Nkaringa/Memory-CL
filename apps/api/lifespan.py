@@ -36,6 +36,8 @@ from storage import (
     RedisClient,
     RepoRegistryRepository,
 )
+from storage.auth_provider_repo import PostgresAuthProviderRepository
+from storage.federated_identity_repo import PostgresFederatedIdentityRepository
 
 _log = get_logger(__name__)
 
@@ -112,6 +114,9 @@ def _build_state() -> tuple[
         user_repo=PostgresUserRepository(engine_proxy(pg)),
         membership_repo=PostgresMembershipRepository(engine_proxy(pg)),
         session_repo=PostgresSessionRepository(engine_proxy(pg)),
+        # Federation repos (Task 5)
+        auth_provider_repo=PostgresAuthProviderRepository(engine_proxy(pg)),
+        federated_identity_repo=PostgresFederatedIdentityRepository(engine_proxy(pg)),
     )
     return state, app_config_repo, repo_registry, runtime, token_cache
 
@@ -127,12 +132,14 @@ def _build_lite_state(settings: Settings) -> tuple[
     """
     from storage.lite.api_token_repo import SqliteApiTokenRepository
     from storage.lite.app_config_repo import SqliteAppConfigRepository
+    from storage.lite.auth_provider_repo import SqliteAuthProviderRepository
     from storage.lite.clients import (
         LiteNeo4jClient,
         LiteSqliteClient,
         LiteVectorClient,
     )
     from storage.lite.engine import expand_data_dir, make_sqlite_engine
+    from storage.lite.federated_identity_repo import SqliteFederatedIdentityRepository
     from storage.lite.graph_repo import LiteGraphRepository
     from storage.lite.ingestion_repo import SqliteIngestionRepository
     from storage.lite.membership_repo import SqliteMembershipRepository
@@ -169,6 +176,9 @@ def _build_lite_state(settings: Settings) -> tuple[
         "user_repo": SqliteUserRepository(engine),
         "membership_repo": SqliteMembershipRepository(engine),
         "session_repo": SqliteSessionRepository(engine),
+        # Federation repos (Task 5)
+        "auth_provider_repo": SqliteAuthProviderRepository(engine),
+        "federated_identity_repo": SqliteFederatedIdentityRepository(engine),
     }
     state = AppState.with_default_embedder(**state_kwargs)
     _log.info("lite_mode_state_built", data_dir=str(data_dir))
@@ -323,6 +333,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             session_cache = SessionCache(state.session_repo)  # type: ignore[arg-type]
             await session_cache.refresh()
             app.state.session_cache = session_cache
+        if state.auth_provider_repo is not None:
+            await state.auth_provider_repo.ensure_schema()
+        if state.federated_identity_repo is not None:
+            await state.federated_identity_repo.ensure_schema()
+        from core.auth.oauth_registry import OAuthRegistry
+        reg = OAuthRegistry()
+        reg.rebuild(await state.auth_provider_repo.list_enabled() if state.auth_provider_repo is not None else [])  # type: ignore[arg-type]
+        app.state.oauth_registry = reg
         # Upgrade the deterministic placeholder embedder to the
         # model-backed one when the RESOLVED (Postgres-over-env) config
         # enables embeddings. Built here (not in _build_state) because the

@@ -1,5 +1,7 @@
 from storage.api_token_repo import ApiTokenRepository, ApiTokenRow, hash_token
+from storage.auth_provider_repo import AuthProviderRow, PostgresAuthProviderRepository
 from storage.app_config_repo import AppConfigRepository, AppConfigRow
+from storage.federated_identity_repo import FederatedIdentityRow, PostgresFederatedIdentityRepository
 from storage.base import StorageClient, StorageHealth
 from storage.membership_repo import MembershipRow, PostgresMembershipRepository
 from storage.neo4j import Neo4jClient
@@ -12,6 +14,8 @@ from storage.qdrant_repo import QdrantVectorRepository
 from storage.redis import RedisClient
 from storage.repo_registry_repo import RepoRegistryRepository, RepoRegistryRow
 from storage.repositories import (
+    AuthProviderRepository,
+    FederatedIdentityRepository,
     GraphRepository,
     IngestionUnitRepository,
     MembershipRepository,
@@ -32,9 +36,13 @@ __all__ = [
     "ApiTokenRow",
     "AppConfigRepository",
     "AppConfigRow",
+    "AuthProviderRepository",
+    "AuthProviderRow",
     "DEFAULT_ORG_ID",
     "DEFAULT_ORG_SLUG",
     "EdgeNotAllowed",
+    "FederatedIdentityRepository",
+    "FederatedIdentityRow",
     "GraphRepository",
     "IngestionUnitRepository",
     "MembershipRepository",
@@ -43,7 +51,9 @@ __all__ = [
     "Neo4jGraphRepository",
     "OrgRepository",
     "OrgRow",
+    "PostgresAuthProviderRepository",
     "PostgresClient",
+    "PostgresFederatedIdentityRepository",
     "PostgresIngestionRepository",
     "PostgresMembershipRepository",
     "PostgresOrgRepository",

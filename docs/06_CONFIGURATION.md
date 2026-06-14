@@ -94,6 +94,7 @@ compatible). See **[22_SECURITY_AND_ACCESS_CONTROL](22_SECURITY_AND_ACCESS_CONTR
 | Var | Default | Notes |
 |---|---|---|
 | `SESSION_TTL_SECONDS` | `86400` | Human browser session lifetime in seconds (24 h). After expiry the httpOnly cookie is rejected and the user must log in again. |
+| `OAUTH_STATE_SECRET` | empty | Signing secret for the `memcl_oauth` handshake cookie used by the Phase-2 federated-login flow. Should be set in production to keep the cookie stable across restarts and instances. OAuth providers themselves are configured at runtime via Settings → Identity — no env vars are needed for them. |
 
 ### MCP (Phase 5)
 
