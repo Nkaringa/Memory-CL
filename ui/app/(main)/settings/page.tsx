@@ -7,6 +7,7 @@ import { getMemoryClient } from "@/lib/api";
 import { PageHeader, Panel, Btn } from "@/components/shell/primitives";
 import { copyToClipboard } from "@/lib/utils";
 import { IdentityPanel } from "@/components/settings/IdentityPanel";
+import { OrganizationPanel } from "@/components/settings/OrganizationPanel";
 import type { ApiToken, EmbeddingMode, FeatureWeightsView } from "@/lib/types";
 
 // Pinned Phase-4 defaults — used when the backend omits feature_weights.
@@ -56,6 +57,8 @@ export default function SettingsPage() {
       <WebhooksPanel />
 
       <IdentityPanel />
+
+      <OrganizationPanel />
 
       <Panel title="Ranking weights" className="mb-3.5">
         <div className="px-4 py-4">

@@ -16,7 +16,7 @@ from storage import (
     RepoRegistryRepository,
 )
 from core.auth.oauth_registry import OAuthRegistry
-from storage.repositories import AuthProviderRepository, FederatedIdentityRepository, MembershipRepository, OrgRepository, SessionRepository, UserRepository
+from storage.repositories import AuthProviderRepository, FederatedIdentityRepository, InvitationRepository, MembershipRepository, OrgRepository, RepoGrantRepository, SessionRepository, TeamRepository, UserRepository
 
 
 def get_app_state(request: Request) -> AppState:
@@ -157,3 +157,26 @@ def get_oauth_registry(request: Request) -> OAuthRegistry:
 AuthProviderRepoDep = Annotated[AuthProviderRepository, Depends(get_auth_provider_repo)]
 FederatedIdentityRepoDep = Annotated[FederatedIdentityRepository, Depends(get_federated_identity_repo)]
 OAuthRegistryDep = Annotated[OAuthRegistry, Depends(get_oauth_registry)]
+
+
+def get_team_repo(state: AppStateDep) -> TeamRepository:
+    if state.team_repo is None:
+        raise RuntimeError("TeamRepository not initialized — lifespan did not run")
+    return state.team_repo
+
+
+def get_repo_grant_repo(state: AppStateDep) -> RepoGrantRepository:
+    if state.repo_grant_repo is None:
+        raise RuntimeError("RepoGrantRepository not initialized — lifespan did not run")
+    return state.repo_grant_repo
+
+
+def get_invitation_repo(state: AppStateDep) -> InvitationRepository:
+    if state.invitation_repo is None:
+        raise RuntimeError("InvitationRepository not initialized — lifespan did not run")
+    return state.invitation_repo
+
+
+TeamRepoDep = Annotated[TeamRepository, Depends(get_team_repo)]
+RepoGrantRepoDep = Annotated[RepoGrantRepository, Depends(get_repo_grant_repo)]
+InvitationRepoDep = Annotated[InvitationRepository, Depends(get_invitation_repo)]

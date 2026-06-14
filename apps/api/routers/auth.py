@@ -17,12 +17,14 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from apps.api.auth_deps import (
     COOKIE_NAME,
     PrincipalDep,
+    SoftPrincipalDep,
     clear_session_cookie,
     hash_session_token,
     new_session_token,
     set_session_cookie,
 )
 from apps.api.dependencies import (
+    InvitationRepoDep,
     MembershipRepoDep,
     OrgRepoDep,
     SessionCacheDep,
@@ -32,6 +34,7 @@ from apps.api.dependencies import (
 from core.auth import ROLE_ADMIN, ROLE_MEMBER, ROLE_OWNER, hash_password, verify_password
 from core.config import get_settings
 from schemas.auth import LoginRequest, MeResponse, RegisterRequest, UserView
+from schemas.orgs import AcceptInviteRequest
 from storage.org_repo import DEFAULT_ORG_ID
 
 # Compute once at import time so the login path can equalise timing when the
@@ -52,19 +55,26 @@ async def provision_user(
     user_repo,            # UserRepository
     membership_repo,      # MembershipRepository
     password_hash: str | None = None,
+    role: str | None = None,
 ) -> tuple[str, str]:
     """Create a user + default-org membership. First-ever user becomes owner.
     Returns (user_id, role). If password_hash is None, no local credential is set
-    (used by federated/OIDC signups)."""
-    is_bootstrap = await user_repo.count_users() == 0
+    (used by federated/OIDC signups).
+    If role is provided, skip the first-user-owner bootstrap and use that role instead."""
+    # Determine effective role BEFORE creating the user so the bootstrap check
+    # (count == 0) is accurate. When an explicit role is passed, skip bootstrap.
+    if role is not None:
+        effective_role = role
+    else:
+        is_bootstrap = await user_repo.count_users() == 0
+        effective_role = ROLE_OWNER if is_bootstrap else ROLE_MEMBER
     user_id = secrets.token_urlsafe(12)
     await user_repo.create_user(user_id=user_id, email=email, display_name=display_name)
     if password_hash is not None:
         await user_repo.set_password(user_id=user_id, password_hash=password_hash)
-    role = ROLE_OWNER if is_bootstrap else ROLE_MEMBER
     membership_id = secrets.token_urlsafe(12)
-    await membership_repo.add_member(membership_id=membership_id, user_id=user_id, org_id=DEFAULT_ORG_ID, role=role)
-    return user_id, role
+    await membership_repo.add_member(membership_id=membership_id, user_id=user_id, org_id=DEFAULT_ORG_ID, role=effective_role)
+    return user_id, effective_role
 
 
 # ---------------------------------------------------------------------------
@@ -260,5 +270,82 @@ async def me(
         display_name=u.display_name if u else "",
         org_id=principal.org_id,
         roles=list(principal.roles),
+    )
+    return MeResponse(authenticated=True, user=user_view)
+
+
+@router.post("/accept-invite", response_model=MeResponse)
+async def accept_invite(
+    body: AcceptInviteRequest,
+    response: Response,
+    principal: SoftPrincipalDep,
+    invitation_repo: InvitationRepoDep,
+    user_repo: UserRepoDep,
+    membership_repo: MembershipRepoDep,
+    session_repo: SessionRepoDep,
+    session_cache: SessionCacheDep,
+) -> MeResponse:
+    """Accept an org invitation.
+
+    CASE 1 — already authenticated user: update/add membership at invited role.
+    CASE 2 — unauthenticated: require email + password + display_name to create
+              the account at the invited role and log them in.
+    """
+    inv = await invitation_repo.get_pending_by_hash(hash_session_token(body.token))
+    if inv is None:
+        raise HTTPException(status_code=400, detail="invalid or expired invite")
+
+    if principal.is_authenticated and principal.kind == "user":
+        # CASE 1 — authenticated user accepts invite
+        existing = await membership_repo.get_membership(user_id=principal.user_id, org_id=inv.org_id)
+        if existing is not None:
+            await membership_repo.set_role(user_id=principal.user_id, org_id=inv.org_id, role=inv.role)
+        else:
+            mid = secrets.token_urlsafe(12)
+            await membership_repo.add_member(membership_id=mid, user_id=principal.user_id, org_id=inv.org_id, role=inv.role)
+        await invitation_repo.mark_accepted(inv.id)
+
+        u = await user_repo.get_user(principal.user_id)
+        # Re-read the membership to get the new role
+        m = await membership_repo.get_membership(user_id=principal.user_id, org_id=inv.org_id)
+        roles = [m.role] if m else [inv.role]
+        user_view = UserView(
+            user_id=principal.user_id,
+            email=u.email if u else "",
+            display_name=u.display_name if u else "",
+            org_id=principal.org_id,
+            roles=roles,
+        )
+        return MeResponse(authenticated=True, user=user_view)
+
+    # CASE 2 — unauthenticated: need registration details
+    if not (body.email and body.password and body.display_name):
+        raise HTTPException(status_code=400, detail="registration details required to accept")
+
+    email = body.email.strip().lower()
+    (user_id, role) = await provision_user(
+        email=email,
+        display_name=body.display_name,
+        user_repo=user_repo,
+        membership_repo=membership_repo,
+        password_hash=hash_password(body.password),
+        role=inv.role,
+    )
+    await invitation_repo.mark_accepted(inv.id)
+
+    await _create_session(
+        user_id=user_id,
+        org_id=inv.org_id,
+        response=response,
+        session_repo=session_repo,
+        session_cache=session_cache,
+    )
+
+    user_view = UserView(
+        user_id=user_id,
+        email=email,
+        display_name=body.display_name,
+        org_id=inv.org_id,
+        roles=[role],
     )
     return MeResponse(authenticated=True, user=user_view)

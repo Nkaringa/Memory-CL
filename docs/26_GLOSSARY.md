@@ -7,6 +7,12 @@ isn't defined here, please add it.
 
 ---
 
+### Access level
+The permission a team or user grant confers on a specific repo: `read` (retrieve only),
+`write` (retrieve + ingest), or `admin` (all operations including grant management). Viewer-role
+org members are capped at `read` regardless of the grant level stored. Managed via
+`/orgs/repos/{id}/grants`. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
+
 ### Account linking
 The process of connecting a federated (OAuth/OIDC) identity to an existing
 Memory-CL user account. Linking is done by **verified email**: if the upstream
@@ -135,6 +141,13 @@ isolation. See [09](09_RETRIEVAL_SYSTEM.md).
 Phase-2 pipeline: walk → parse → graph build → write to Postgres +
 Neo4j + Qdrant. See [03](03_DATA_FLOW.md).
 
+### Invitation
+A one-time-use onboarding token minted by an org admin via `POST /orgs/invitations`. The raw
+token is shown once (only a SHA-256 hash is stored). A new user presents it at
+`POST /auth/accept-invite` with credentials → created at the invited role + logged in. An
+existing logged-in user presents it to have their org membership added or updated.
+See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
+
 ### `IngestionUnit`
 The atomic AST extraction output. One per
 module / class / function / method / constant. Identified by a
@@ -215,6 +228,12 @@ checksum failures. Never deletes the unit. See [16](16_AUDIT_AND_GOVERNANCE.md).
 Phase-4 module that converts fused candidates into a sorted
 `RankedResult` list using the mandated formula. See [10](10_RANKING_ENGINE.md).
 
+### RBAC (role-based access control)
+The per-repo access enforcement layer added in Phase 3. `RepoAccessResolver` evaluates a
+caller's org role + team memberships + direct user grants to decide whether a request is
+allowed on a specific repo. Owner/admin always pass; member/viewer need a grant. Agents
+(API tokens) are org-scoped and bypass per-repo checks by design. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
+
 ### `RelevanceScore`
 Phase-6 lifecycle score: `0.4·usage + 0.3·recency + 0.2·centrality
 + 0.1·success`. Drives decay / refresh decisions. See [13](13_MEMORY_EVOLUTION.md).
@@ -223,12 +242,17 @@ Phase-6 lifecycle score: `0.4·usage + 0.3·recency + 0.2·centrality
 A multi-tenant scoping key. Every unit, edge, and vector point
 carries it. Sharding is per-repo.
 
+### Repo grant
+A row in `repo_grants` that gives a team or a specific user an access level (`read / write /
+admin`) on a single repo. Grants are checked by `RepoAccessResolver` on every human-path
+request. Managed via `POST /orgs/repos/{id}/grants`. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
+
 ### `request_id`
 A 16-hex-char identifier per MCP call. Surfaces in audit + logs +
 spans for end-to-end tracing.
 
 ### Role
-The authorization level a User holds in an Organization via their Membership: `owner` (full control) | `admin` (manage users) | `member` (read/write) | `viewer` (read-only). Fine-grained per-repo RBAC is Phase 3.
+The authorization level a User holds in an Organization via their Membership: `owner` (full control) | `admin` (manage users) | `member` (read/write) | `viewer` (read-only). Fine-grained per-repo RBAC (Phase 3) is now enforced on the human path.
 
 ### Runtime config
 The no-restart configuration layer (`core/config_runtime.RuntimeConfig` over
@@ -259,6 +283,11 @@ config + schema version + MCP registry + state token)`. Same inputs
 ### `source_sha`
 SHA-256 of an `IngestionUnit.content`. Drives the
 `ON CONFLICT WHERE source_sha differs` upsert guard.
+
+### Team
+An org sub-group (`org_teams` table). Teams are granted access to repos via repo grants; all
+members of the team inherit those grants. A user can belong to multiple teams within the same
+org. Managed via `/orgs/teams`. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
 
 ### Tenant
 The first-class ownership scope for repos. `TenantManager` enforces

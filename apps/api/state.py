@@ -12,7 +12,7 @@ from storage import (
     QdrantVectorRepository,
     RedisClient,
 )
-from storage.repositories import AuthProviderRepository, FederatedIdentityRepository, MembershipRepository, OrgRepository, SessionRepository, UserRepository
+from storage.repositories import AuthProviderRepository, FederatedIdentityRepository, InvitationRepository, MembershipRepository, OrgRepository, RepoGrantRepository, SessionRepository, TeamRepository, UserRepository
 
 
 @dataclass
@@ -46,6 +46,10 @@ class AppState:
     # Federation repos (Task 5). Optional so existing test fixtures compile.
     auth_provider_repo: AuthProviderRepository | None = field(default=None)
     federated_identity_repo: FederatedIdentityRepository | None = field(default=None)
+    # RBAC repos (Task 6). Optional so existing test fixtures compile.
+    team_repo: TeamRepository | None = field(default=None)
+    repo_grant_repo: RepoGrantRepository | None = field(default=None)
+    invitation_repo: InvitationRepository | None = field(default=None)
 
     @classmethod
     def with_default_embedder(
@@ -66,6 +70,9 @@ class AppState:
         session_repo: SessionRepository | None = None,
         auth_provider_repo: AuthProviderRepository | None = None,
         federated_identity_repo: FederatedIdentityRepository | None = None,
+        team_repo: TeamRepository | None = None,
+        repo_grant_repo: RepoGrantRepository | None = None,
+        invitation_repo: InvitationRepository | None = None,
     ) -> AppState:
         """Build an AppState, defaulting the embedder when none is given.
 
@@ -92,4 +99,7 @@ class AppState:
             session_repo=session_repo,
             auth_provider_repo=auth_provider_repo,
             federated_identity_repo=federated_identity_repo,
+            team_repo=team_repo,
+            repo_grant_repo=repo_grant_repo,
+            invitation_repo=invitation_repo,
         )

@@ -428,6 +428,41 @@ export interface ProviderAdmin {
   enabled: boolean;
 }
 
+// ---- RBAC / Organization --------------------------------------------------
+export interface OrgMember {
+  user_id: string;
+  email: string;
+  display_name: string;
+  role: string;
+}
+
+export interface Team {
+  team_id: string;
+  name: string;
+  slug: string;
+}
+
+export interface TeamMember {
+  user_id: string;
+  email: string;
+  display_name: string;
+}
+
+export interface Invitation {
+  id: string;
+  email: string;
+  role: string;
+  status: string;
+  expires_at: string | null;
+}
+
+export interface RepoGrant {
+  id: string;
+  subject_type: "team" | "user";
+  subject_id: string;
+  access: "read" | "write" | "admin";
+}
+
 // ---- Auth -----------------------------------------------------------------
 export interface UserView {
   user_id: string;
