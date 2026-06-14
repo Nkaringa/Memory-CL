@@ -71,7 +71,8 @@ class PostgresOrgRepository:
                     {"i": org_id, "n": name, "s": slug},
                 )
         got = await self.get_org(org_id)
-        assert got is not None
+        if got is None:
+            raise RuntimeError(f"organization {org_id!r} vanished after upsert")
         return got
 
     async def get_org(self, org_id: str) -> OrgRow | None:
