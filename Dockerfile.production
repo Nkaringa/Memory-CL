@@ -76,12 +76,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     OTEL_ENABLED=true \
     UI_ENABLED=true
 
-# Install only the runtime cert bundle. No compilers, no curl, no shells
-# beyond what the base image already ships.
+# Runtime packages: cert bundle, tini (reaper), and git — git is needed
+# by Phase-3 freshness to clone/pull MANAGED repos. GIT_CONFIG_NOSYSTEM
+# keeps git from reading /etc config under the read-only root.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates tini \
+ && apt-get install -y --no-install-recommends ca-certificates tini git \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
  && apt-get clean
+ENV GIT_CONFIG_NOSYSTEM=1
 
 # Non-root user — security baseline. Fixed uid/gid so volume permissions
 # survive across container restarts on bind-mounted volumes.
@@ -99,6 +101,11 @@ RUN mkdir -p /home/memcl/.cache/fastembed /home/memcl/.cache/huggingface \
  && chown -R memcl:memcl /home/memcl/.cache
 ENV FASTEMBED_CACHE_PATH=/home/memcl/.cache/fastembed \
     HF_HOME=/home/memcl/.cache/huggingface
+
+# Writable workspace for MANAGED (git-cloned) repos. The root fs is
+# read-only, so a named volume is mounted here in compose; create the dir
+# memcl-owned so the volume initializes writable for uid 1000.
+RUN mkdir -p /managed && chown memcl:memcl /managed
 
 WORKDIR /app
 

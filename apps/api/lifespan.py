@@ -27,6 +27,7 @@ from storage import (
     QdrantStorageClient,
     QdrantVectorRepository,
     RedisClient,
+    RepoRegistryRepository,
 )
 
 _log = get_logger(__name__)
@@ -62,8 +63,10 @@ async def _close_embedder(embedder: object) -> None:
         _log.warning("embedder_close_error", error=str(exc))
 
 
-def _build_state() -> tuple[AppState, AppConfigRepository, RuntimeConfig]:
-    """Build the AppState plus the runtime-config plumbing.
+def _build_state() -> tuple[
+    AppState, AppConfigRepository, RepoRegistryRepository, RuntimeConfig
+]:
+    """Build the AppState plus the runtime-config + repo-registry plumbing.
 
     The embedder is wired with the deterministic fallback here and
     upgraded to the model-backed one in `lifespan` AFTER storage connects
@@ -81,6 +84,7 @@ def _build_state() -> tuple[AppState, AppConfigRepository, RuntimeConfig]:
     )
     rd = RedisClient(settings.redis_url)
     app_config_repo = AppConfigRepository(engine_proxy(pg))
+    repo_registry = RepoRegistryRepository(engine_proxy(pg))
     runtime = RuntimeConfig(app_config_repo, settings)
     state = AppState.with_default_embedder(
         postgres=pg,
@@ -94,7 +98,7 @@ def _build_state() -> tuple[AppState, AppConfigRepository, RuntimeConfig]:
         vector_repo=QdrantVectorRepository(client_proxy(qd)),
         embedder=None,  # deterministic fallback; upgraded post-refresh
     )
-    return state, app_config_repo, runtime
+    return state, app_config_repo, repo_registry, runtime
 
 
 async def _seed_app_config_from_env(
@@ -182,11 +186,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         otlp_endpoint=settings.otel_exporter_otlp_endpoint,
     )
 
-    state, app_config_repo, runtime = _build_state()
+    state, app_config_repo, repo_registry, runtime = _build_state()
     app.state.app_state = state
     # Runtime config (Postgres-over-env). Auth + embedder read this.
     # The snapshot is loaded below, AFTER storage connects.
     app.state.runtime_config = runtime
+    # Repo registry (Phase 3 freshness). Endpoints + the watcher/poller
+    # read it; schema ensured below alongside the other tables.
+    app.state.repo_registry = repo_registry
+    # Freshness task handles — populated after boot, cancelled on shutdown.
+    freshness_tasks: list[asyncio.Task[None]] = []
     # Build the MCP tool registry once per process — it's stateless,
     # so cloning it across requests would just waste memory.
     from apps.mcp.registry import build_default_registry
@@ -218,6 +227,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # (no lockout, embeddings stay on), and refresh() populates the
         # snapshot the sync auth dependency reads.
         await app_config_repo.ensure_schema()
+        await repo_registry.ensure_schema()
         await _seed_app_config_from_env(app_config_repo, settings)
         await runtime.refresh()
         # Upgrade the deterministic placeholder embedder to the
@@ -301,12 +311,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             safe_mode=app.state.safe_mode.status.enabled,
             native_mcp=native_handle is not None,
         )
+        # Freshness (Phase 3): start the managed-repo poller + local
+        # watcher. Done last — after storage is healthy and the ingest
+        # path is fully wired — so the first poll/reingest has everything
+        # it needs. Cancelled in the finally block.
+        from apps.api.freshness.runtime import start_freshness
+        freshness_tasks = start_freshness(
+            app, state=state, settings=settings, runtime=runtime,
+            registry=repo_registry,
+        )
+
         async with AsyncExitStack() as native_stack:
             if native_handle is not None:
                 await native_stack.enter_async_context(native_handle.lifespan())
             yield
     finally:
         _log.info("shutdown_begin")
+        from apps.api.freshness.runtime import stop_freshness
+        await stop_freshness(freshness_tasks)
         results = await asyncio.gather(
             *(c.disconnect() for c in clients), return_exceptions=True
         )

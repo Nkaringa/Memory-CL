@@ -7,6 +7,7 @@ from storage.postgres_repo import PostgresIngestionRepository
 from storage.qdrant import QdrantStorageClient
 from storage.qdrant_repo import QdrantVectorRepository
 from storage.redis import RedisClient
+from storage.repo_registry_repo import RepoRegistryRepository, RepoRegistryRow
 from storage.repositories import (
     GraphRepository,
     IngestionUnitRepository,
@@ -31,6 +32,8 @@ __all__ = [
     "QdrantVectorRepository",
     "QnameMatch",
     "RedisClient",
+    "RepoRegistryRepository",
+    "RepoRegistryRow",
     "RepoSummary",
     "StorageClient",
     "StorageHealth",

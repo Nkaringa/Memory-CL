@@ -25,6 +25,11 @@ class Embedder(Protocol):
 
     async def embed_batch(self, texts: Sequence[str]) -> list[tuple[float, ...]]: ...
 
+    async def aclose(self) -> None:
+        """Release any held resources (HTTP client, ONNX session). No-op for
+        resource-free embedders; always safe to call exactly once."""
+        ...
+
 
 class DeterministicEmbedder:
     """Hash-based deterministic embedder (no external API, no PRNG).
@@ -52,6 +57,10 @@ class DeterministicEmbedder:
 
     async def embed_batch(self, texts: Sequence[str]) -> list[tuple[float, ...]]:
         return [self._embed_one(t) for t in texts]
+
+    async def aclose(self) -> None:
+        """No-op — the deterministic embedder holds no resources."""
+        return None
 
     def _embed_one(self, text: str) -> tuple[float, ...]:
         floats: list[float] = []

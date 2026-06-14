@@ -410,6 +410,37 @@ def render_reembed(ui: UI, res: ReembedResult) -> int:
 
 
 # ---------------------------------------------------------------------------
+# freshness
+# ---------------------------------------------------------------------------
+def render_freshness(ui: UI, data: dict) -> int:
+    repos = data.get("repos", [])
+    if not repos:
+        ui.out.print("No repos registered for freshness yet.")
+        ui.hint("add one: memcl freshness add <git-url>   (or: memcl ingest <path>)")
+        return 0
+    if not data.get("freshness_enabled", True):
+        ui.note("freshness is DISABLED (FRESHNESS_ENABLED=false) — state shown is stale")
+    table = Table(title=None, header_style="bold")
+    table.add_column("repo")
+    table.add_column("type")
+    table.add_column("branch")
+    table.add_column("watch")
+    table.add_column("last synced")
+    table.add_column("state")
+    for r in repos:
+        watch = "[green]on[/green]" if r.get("watch_enabled") else "[dim]paused[/dim]"
+        synced = (r.get("last_synced_at") or "—")[:19].replace("T", " ")
+        err = r.get("last_error")
+        state = f"[red]{escape(err[:40])}[/red]" if err else "[green]ok[/green]"
+        table.add_row(
+            escape(r.get("repo_id", "")), escape(r.get("source_type", "")),
+            escape(r.get("branch") or "—"), watch, synced, state,
+        )
+    ui.out.print(table)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # doctor
 # ---------------------------------------------------------------------------
 def render_check(
@@ -428,6 +459,7 @@ __all__ = [
     "UI",
     "render_check",
     "render_explore",
+    "render_freshness",
     "render_ingest",
     "render_overview",
     "render_read",

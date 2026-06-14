@@ -7,12 +7,15 @@
  */
 
 import type {
+  AddManagedResult,
   AppConfig,
   AuditTailResponse,
   AuditVerifyResponse,
   EmbeddingMode,
   EmbeddingModeResult,
+  FreshnessList,
   McpKeyResponse,
+  SyncResult,
   IngestRequest,
   IngestResponse,
   McpToolList,
@@ -204,6 +207,27 @@ export class AsyncMemoryClient {
     return this.post<unknown>("/config/complete-onboarding", {});
   }
 
+  // ------ freshness (Phase 3) ---------------------------------------------
+  getFreshness(): Promise<FreshnessList> {
+    return this.get<FreshnessList>("/freshness");
+  }
+
+  addManagedRepo(input: { remote_url: string; branch?: string; repo_id?: string }): Promise<AddManagedResult> {
+    return this.post<AddManagedResult>("/freshness/managed", input);
+  }
+
+  setFreshnessWatch(repoId: string, enabled: boolean): Promise<unknown> {
+    return this.post<unknown>(`/freshness/${encodeURIComponent(repoId)}/toggle`, { enabled });
+  }
+
+  syncFreshness(repoId: string): Promise<SyncResult> {
+    return this.post<SyncResult>(`/freshness/${encodeURIComponent(repoId)}/sync`, {});
+  }
+
+  removeFreshness(repoId: string): Promise<unknown> {
+    return this.del<unknown>(`/freshness/${encodeURIComponent(repoId)}`);
+  }
+
   // ------ internal HTTP plumbing ------------------------------------------
   private get<T>(path: string, opts?: { timeoutMs?: number }): Promise<T> {
     return this.request<T>("GET", path, undefined, opts);
@@ -213,8 +237,12 @@ export class AsyncMemoryClient {
     return this.request<T>("POST", path, body, opts);
   }
 
+  private del<T>(path: string, opts?: { timeoutMs?: number }): Promise<T> {
+    return this.request<T>("DELETE", path, undefined, opts);
+  }
+
   private async request<T>(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "DELETE",
     path: string,
     body?: unknown,
     opts?: { timeoutMs?: number },

@@ -319,6 +319,34 @@ class AsyncMemoryClient:
         """POST /config/complete-onboarding — mark wizard finished."""
         await self._post_json("/config/complete-onboarding", {})
 
+    # ----- freshness (Phase 3) -----
+    async def get_freshness(self) -> dict[str, Any]:
+        """GET /freshness — registered repos + their freshness state."""
+        return await self._get_json("/freshness")
+
+    async def add_managed_repo(
+        self, *, remote_url: str, branch: str | None = None, repo_id: str | None = None
+    ) -> dict[str, Any]:
+        """POST /freshness/managed — clone a git URL + ingest + keep fresh."""
+        body: dict[str, Any] = {"remote_url": remote_url}
+        if branch is not None:
+            body["branch"] = branch
+        if repo_id is not None:
+            body["repo_id"] = repo_id
+        return await self._post_json("/freshness/managed", body)
+
+    async def set_freshness_watch(self, *, repo_id: str, enabled: bool) -> dict[str, Any]:
+        """POST /freshness/{repo_id}/toggle — pause/resume a repo."""
+        return await self._post_json(f"/freshness/{repo_id}/toggle", {"enabled": enabled})
+
+    async def sync_freshness(self, *, repo_id: str) -> dict[str, Any]:
+        """POST /freshness/{repo_id}/sync — force a freshness check now."""
+        return await self._post_json(f"/freshness/{repo_id}/sync", {})
+
+    async def remove_freshness(self, *, repo_id: str) -> dict[str, Any]:
+        """DELETE /freshness/{repo_id} — deregister (delete a managed clone)."""
+        return await self._delete_json(f"/freshness/{repo_id}")
+
     # ----- internal HTTP plumbing -----
     def _request_id_headers(self) -> dict[str, str]:
         """Compute X-Request-ID for the current call.
@@ -340,6 +368,10 @@ class AsyncMemoryClient:
         resp = await self._client.get(
             path, params=params or {}, headers=self._request_id_headers(),
         )
+        return self._parse(resp)
+
+    async def _delete_json(self, path: str) -> Any:
+        resp = await self._client.delete(path, headers=self._request_id_headers())
         return self._parse(resp)
 
     @staticmethod

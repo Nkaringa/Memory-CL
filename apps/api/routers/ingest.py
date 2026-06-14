@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -117,6 +118,87 @@ def _build_embedding_components(
     return pipeline, embedder
 
 
+class RepoPathError(ValueError):
+    """`repo_path` does not point at a readable directory on the API host."""
+
+
+@dataclass(frozen=True)
+class IngestOutcome:
+    """Result of one in-process ingest — what `run_ingest` returns to any
+    caller (the HTTP endpoint, the freshness poller, the watcher)."""
+
+    repo_id: str
+    commit_sha: str
+    units_collection: str
+    metrics: dict[str, float | int]
+    failed_files: list[str]
+
+
+async def run_ingest(
+    state: AppState,
+    settings: Settings,
+    runtime: RuntimeConfig | None,
+    *,
+    repo_id: str,
+    repo_path: str,
+    commit_sha: str,
+) -> IngestOutcome:
+    """Walk `repo_path`, parse it, and refresh the memory for `repo_id`.
+
+    The single in-process ingestion path, shared by the `/ingest` endpoint
+    and the Phase-3 freshness loops (poller + watcher) — so they can't
+    drift apart. Sizes the Qdrant collection to the active embedding
+    dimension, builds the embedding stack from `RuntimeConfig`, runs the
+    pipeline, and always releases the embedder. Raises `RepoPathError`
+    when the path isn't a directory; callers map that to a 400 (endpoint)
+    or a registry error (freshness).
+    """
+    repo_root = Path(repo_path)
+    # ASYNC240: a single-shot stat() is fine — anyio.Path would add a
+    # dependency for one call.
+    if not repo_root.exists() or not repo_root.is_dir():  # noqa: ASYNC240
+        raise RepoPathError(f"repo_path is not a directory: {repo_root}")
+
+    # Qdrant ≥1.11 rejects ":" in collection names with a 422. Use "_" as
+    # the separator. The user-facing repo_id is unchanged; only the
+    # storage-layer name is rewritten.
+    collection = f"repo_{repo_id}"
+    # Size the collection to the ACTIVE embedding dimension (384 local /
+    # 1536 openai) so the vectors fit. Mismatched sizes get rejected by
+    # Qdrant mid-upsert.
+    vector_size = (
+        active_embedding_dimension(runtime)
+        if runtime is not None
+        else _DEFAULT_VECTOR_SIZE
+    )
+    await state.vector_repo.ensure_collection(collection, vector_size)
+
+    ctx = make_context(
+        repo_id=repo_id,
+        repo_path=repo_root,
+        commit_sha=commit_sha,
+        units_collection=collection,
+        units_repo=state.units_repo,
+        graph_repo=state.graph_repo,
+        vector_repo=state.vector_repo,
+    )
+    components = _build_embedding_components(state, settings, runtime)
+    try:
+        result = await IngestionPipeline(
+            embedding_pipeline=components[0] if components else None,
+        ).run(ctx)
+    finally:
+        if components is not None:
+            await components[1].aclose()
+    return IngestOutcome(
+        repo_id=result.repo_id,
+        commit_sha=result.commit_sha,
+        units_collection=collection,
+        metrics=dict(result.metrics),
+        failed_files=list(result.failed_files),
+    )
+
+
 @router.post(
     "",
     response_model=IngestResponse,
@@ -130,62 +212,40 @@ async def ingest_repo(
 ) -> IngestResponse:
     """Trigger ingestion of `repo_path` under tenant `repo_id` at `commit_sha`.
 
-    Phase 2 contract: idempotent — re-running the same (repo_id, commit_sha)
-    on identical content is a no-op for unchanged units. Per-file failures
-    are isolated and reported via `failed_files`.
-
-    Phase 3: when an OpenAI key is configured, changed units get real
-    vectors as part of the same run; embedding failures degrade to the
-    placeholder behavior and never fail the ingest.
+    Idempotent — re-running the same (repo_id, commit_sha) on identical
+    content is a no-op for unchanged units; per-file failures are isolated
+    and reported via `failed_files`. When embeddings are enabled, changed
+    units get real vectors in the same run. On success the repo is recorded
+    in the freshness registry as a `local` repo (persisting `repo_path` so
+    the watcher can keep it fresh).
     """
-    repo_root = Path(req.repo_path)
-    # ASYNC240: a single-shot stat() during request setup is fine —
-    # the alternative (anyio.Path) adds a dependency for one call.
-    if not repo_root.exists() or not repo_root.is_dir():  # noqa: ASYNC240
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"repo_path is not a directory: {repo_root}",
-        )
-
-    # Qdrant ≥1.11 rejects ":" in collection names with a 422. Use "_"
-    # as the separator to keep names unambiguous + accepted everywhere.
-    # The user-facing repo_id is unchanged; only the storage-layer name
-    # is rewritten.
-    collection = f"repo_{req.repo_id}"
-    # Size the collection to the ACTIVE embedding dimension (384 in local
-    # mode, 1536 in openai mode) so the vectors the embedder produces fit
-    # the collection. Mismatched sizes get rejected by Qdrant mid-upsert.
     runtime = getattr(request.app.state, "runtime_config", None)
-    vector_size = (
-        active_embedding_dimension(runtime)
-        if runtime is not None
-        else _DEFAULT_VECTOR_SIZE
-    )
-    await state.vector_repo.ensure_collection(collection, vector_size)
-
-    ctx = make_context(
-        repo_id=req.repo_id,
-        repo_path=repo_root,
-        commit_sha=req.commit_sha,
-        units_collection=collection,
-        units_repo=state.units_repo,
-        graph_repo=state.graph_repo,
-        vector_repo=state.vector_repo,
-    )
-    components = _build_embedding_components(state, get_settings(), runtime)
     try:
-        result = await IngestionPipeline(
-            embedding_pipeline=components[0] if components else None,
-        ).run(ctx)
-    finally:
-        if components is not None:
-            await components[1].aclose()
+        outcome = await run_ingest(
+            state,
+            get_settings(),
+            runtime,
+            repo_id=req.repo_id,
+            repo_path=req.repo_path,
+            commit_sha=req.commit_sha,
+        )
+    except RepoPathError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    # Register/refresh this repo in the freshness registry (local source).
+    # None-safe: test apps without the registry wired just skip it.
+    registry = getattr(request.app.state, "repo_registry", None)
+    if registry is not None:
+        await registry.upsert_local(req.repo_id, req.repo_path, req.commit_sha)
+
     return IngestResponse(
-        repo_id=result.repo_id,
-        commit_sha=result.commit_sha,
-        units_collection=collection,
-        metrics=dict(result.metrics),
-        failed_files=list(result.failed_files),
+        repo_id=outcome.repo_id,
+        commit_sha=outcome.commit_sha,
+        units_collection=outcome.units_collection,
+        metrics=outcome.metrics,
+        failed_files=outcome.failed_files,
     )
 
 
