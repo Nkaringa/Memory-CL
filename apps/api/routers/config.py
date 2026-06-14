@@ -49,12 +49,18 @@ class ConfigStateResponse(BaseModel):
     embedding_mode: str
     embeddings_enabled: bool
     has_openai_key: bool
+    has_webhook_secret: bool
     mcp_key_hint: str | None
 
 
 class GeneratedKeyResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     api_key: str
+
+
+class WebhookSecretResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    secret: str
 
 
 class OpenAiKeyRequest(BaseModel):
@@ -121,6 +127,7 @@ async def get_config(runtime: RuntimeConfigDep) -> ConfigStateResponse:
         embedding_mode=runtime.embedding_mode(),
         embeddings_enabled=runtime.embeddings_enabled(),
         has_openai_key=runtime.openai_api_key() is not None,
+        has_webhook_secret=runtime.webhook_secret() is not None,
         mcp_key_hint=runtime.mcp_key_hint(),
     )
 
@@ -196,6 +203,21 @@ async def set_openai_key(
         await runtime.repo.set_openai_api_key(None)
     await runtime.refresh()
     return OkResponse()
+
+
+@router.post("/webhook-secret/generate", response_model=WebhookSecretResponse)
+async def generate_webhook_secret(
+    runtime: RuntimeConfigDep,
+    api_key: ApiKeyDep,
+) -> WebhookSecretResponse:
+    """Generate (or replace) the git-webhook signing secret. Returned ONCE —
+    copy it into your GitHub/GitLab webhook settings now. Bootstrap-or-authed
+    (open only while the instance is unconfigured)."""
+    _require_bootstrap_or_authed(runtime, api_key)
+    secret = secrets.token_urlsafe(_MCP_KEY_ENTROPY_BYTES)
+    await runtime.repo.set_webhook_secret(secret)
+    await runtime.refresh()
+    return WebhookSecretResponse(secret=secret)
 
 
 @router.post("/embedding-mode", response_model=EmbeddingModeResponse)

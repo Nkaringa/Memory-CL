@@ -321,6 +321,7 @@ export interface AppConfig {
   embedding_mode: EmbeddingMode;
   embeddings_enabled: boolean;
   has_openai_key: boolean;
+  has_webhook_secret: boolean;
   /** Masked tail of the configured MCP key (e.g. "••••abcd"), or null. */
   mcp_key_hint: string | null;
 }

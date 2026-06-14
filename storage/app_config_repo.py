@@ -35,6 +35,9 @@ _CONFIG_ID = 1
 
 
 # Idempotent DDL — runs in the same ensure-schema pass as ingestion_units.
+# The ALTER carries an already-deployed app_config row (Phase 1) forward
+# with the new webhook_secret column — CREATE TABLE IF NOT EXISTS alone
+# won't add a column to a table that already exists.
 _DDL_STATEMENTS: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS app_config (
@@ -44,9 +47,11 @@ _DDL_STATEMENTS: tuple[str, ...] = (
         embedding_mode       TEXT NOT NULL DEFAULT 'openai',
         embedding_model      TEXT,
         onboarding_completed BOOLEAN NOT NULL DEFAULT false,
+        webhook_secret       TEXT,
         updated_at           TIMESTAMPTZ
     )
     """,
+    "ALTER TABLE app_config ADD COLUMN IF NOT EXISTS webhook_secret TEXT",
 )
 
 
@@ -63,7 +68,10 @@ class AppConfigRow:
     embedding_mode: str
     embedding_model: str | None
     onboarding_completed: bool
-    updated_at: datetime | None
+    # Trailing fields carry defaults so callers that predate them (tests,
+    # older construction sites) keep working without passing every field.
+    webhook_secret: str | None = None
+    updated_at: datetime | None = None
 
 
 _SELECT = text("SELECT * FROM app_config WHERE id = :id")
@@ -81,14 +89,15 @@ WITH input AS (
         :embedding_mode AS embedding_mode,
         :embedding_model AS embedding_model,
         CAST(:onboarding_completed AS BOOLEAN) AS onboarding_completed,
+        :webhook_secret AS webhook_secret,
         CAST(:updated_at AS TIMESTAMPTZ) AS updated_at
 )
 INSERT INTO app_config (
     id, mcp_api_key, openai_api_key, embedding_mode,
-    embedding_model, onboarding_completed, updated_at
+    embedding_model, onboarding_completed, webhook_secret, updated_at
 ) SELECT
     id, mcp_api_key, openai_api_key, embedding_mode,
-    embedding_model, onboarding_completed, updated_at
+    embedding_model, onboarding_completed, webhook_secret, updated_at
   FROM input
 ON CONFLICT (id) DO UPDATE SET
     mcp_api_key          = EXCLUDED.mcp_api_key,
@@ -96,6 +105,7 @@ ON CONFLICT (id) DO UPDATE SET
     embedding_mode       = EXCLUDED.embedding_mode,
     embedding_model      = EXCLUDED.embedding_model,
     onboarding_completed = EXCLUDED.onboarding_completed,
+    webhook_secret       = EXCLUDED.webhook_secret,
     updated_at           = EXCLUDED.updated_at
 """)
 
@@ -109,6 +119,7 @@ def _row_to_config(row: Any) -> AppConfigRow:
         embedding_mode=m["embedding_mode"],
         embedding_model=m["embedding_model"],
         onboarding_completed=bool(m["onboarding_completed"]),
+        webhook_secret=m["webhook_secret"],
         updated_at=m["updated_at"],
     )
 
@@ -157,6 +168,7 @@ class AppConfigRepository:
             "onboarding_completed": (
                 current.onboarding_completed if current else False
             ),
+            "webhook_secret": current.webhook_secret if current else None,
         }
         for key in (
             "mcp_api_key",
@@ -164,6 +176,7 @@ class AppConfigRepository:
             "embedding_mode",
             "embedding_model",
             "onboarding_completed",
+            "webhook_secret",
         ):
             if key in fields:
                 merged[key] = fields[key]
@@ -183,6 +196,7 @@ class AppConfigRepository:
             embedding_mode=merged["embedding_mode"],  # type: ignore[arg-type]
             embedding_model=merged["embedding_model"],  # type: ignore[arg-type]
             onboarding_completed=merged["onboarding_completed"],  # type: ignore[arg-type]
+            webhook_secret=merged["webhook_secret"],  # type: ignore[arg-type]
             updated_at=params["updated_at"],  # type: ignore[arg-type]
         )
 
@@ -198,6 +212,9 @@ class AppConfigRepository:
 
     async def set_embedding_model(self, model: str | None) -> AppConfigRow:
         return await self.upsert(embedding_model=model)
+
+    async def set_webhook_secret(self, secret: str | None) -> AppConfigRow:
+        return await self.upsert(webhook_secret=secret)
 
     async def set_onboarding_completed(self, completed: bool) -> AppConfigRow:
         return await self.upsert(onboarding_completed=completed)

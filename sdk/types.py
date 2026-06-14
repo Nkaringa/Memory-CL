@@ -236,6 +236,7 @@ class AppConfigView(_SdkBase):
     embedding_mode: str
     embeddings_enabled: bool
     has_openai_key: bool
+    has_webhook_secret: bool = False
     mcp_key_hint: str | None = None
 
 
