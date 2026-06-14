@@ -337,6 +337,37 @@ export interface EmbeddingModeResult {
   failed_batches: number;
 }
 
+// ---- Freshness (Phase 3) --------------------------------------------------
+export interface FreshnessRepo {
+  repo_id: string;
+  source_type: "local" | "managed";
+  repo_path: string;
+  remote_url: string | null;
+  branch: string | null;
+  last_commit_sha: string | null;
+  watch_enabled: boolean;
+  last_synced_at: string | null;
+  last_change_at: string | null;
+  last_error: string | null;
+}
+
+export interface FreshnessList {
+  freshness_enabled: boolean;
+  repos: FreshnessRepo[];
+}
+
+export interface AddManagedResult {
+  repo_id: string;
+  commit_sha: string | null;
+}
+
+export interface SyncResult {
+  repo_id: string;
+  changed: boolean;
+  new_sha: string | null;
+  error: string | null;
+}
+
 /** One-time key reveal from generate / rotate. */
 export interface McpKeyResponse {
   api_key: string;
