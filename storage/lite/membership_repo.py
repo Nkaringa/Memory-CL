@@ -131,5 +131,12 @@ class SqliteMembershipRepository:
                 {"role": role, "uid": user_id, "oid": org_id},
             )
 
+    async def remove_member(self, *, user_id: str, org_id: str) -> None:
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                text("DELETE FROM memberships WHERE user_id = :uid AND org_id = :oid"),
+                {"uid": user_id, "oid": org_id},
+            )
+
 
 __all__ = ["SqliteMembershipRepository"]

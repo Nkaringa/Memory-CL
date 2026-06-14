@@ -23,6 +23,7 @@ from apps.api.routers import (
 )
 from apps.api.routers import auth as auth_router
 from apps.api.routers import oauth as oauth_router
+from apps.api.routers import orgs as orgs_router
 from apps.mcp import mcp_router
 from core import get_logger, get_settings
 
@@ -82,6 +83,8 @@ def create_app() -> FastAPI:
     app.include_router(auth_router.router)
     # OAuth public + flow endpoints (Phase 2 federation).
     app.include_router(oauth_router.router)
+    # Org members + teams management (Phase 3 RBAC).
+    app.include_router(orgs_router.router)
 
     if settings.ui_enabled:
         ui_dir = Path(__file__).resolve().parent.parent / "ui" / "static"
