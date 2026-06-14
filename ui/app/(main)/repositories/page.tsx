@@ -3,7 +3,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { getMemoryClient } from "@/lib/api";
-import type { FreshnessRepo } from "@/lib/types";
+import { fetchMe } from "@/lib/auth";
+import { listGrants, createGrant, deleteGrant, type CreateGrantBody } from "@/lib/orgs";
+import type { FreshnessRepo, RepoGrant } from "@/lib/types";
 import { PageHeader, Panel, Btn } from "@/components/shell/primitives";
 
 interface OverviewData {
@@ -25,8 +27,14 @@ export default function RepositoriesPage() {
     refetchInterval: 60_000,
   });
 
+  const me = useQuery({ queryKey: ["me"], queryFn: fetchMe });
+  const myRoles = me.data?.user?.roles ?? [];
+  const canManageAccess =
+    myRoles.includes("owner") || myRoles.includes("admin");
+
   const [selected, setSelected] = useState<string>("");
   const [showAdd, setShowAdd] = useState(false);
+  const [expandedGrants, setExpandedGrants] = useState<string | null>(null);
 
   const overview = useMutation({
     mutationFn: async (repoId: string) => {
@@ -78,22 +86,42 @@ export default function RepositoriesPage() {
             </thead>
             <tbody>
               {list.map((r) => (
-                <tr key={r.repo_id} className="border-t border-border">
-                  <td className="px-4 py-2.5 font-semibold">{r.repo_id}</td>
-                  <td className="px-4 py-2.5 tabular-nums">{r.units.toLocaleString()}</td>
-                  <td className="px-4 py-2.5 tabular-nums">{r.files.toLocaleString()}</td>
-                  <td className="px-4 py-2.5 text-muted">
-                    {r.languages.length > 3
-                      ? `${r.languages.length} languages`
-                      : r.languages.join(", ") || "—"}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex gap-1.5">
-                      <SmBtn onClick={() => openOverview(r.repo_id)}>overview</SmBtn>
-                      <SmBtn title="Re-embed calls /ingest/reembed — planned operator action">re-embed</SmBtn>
-                    </div>
-                  </td>
-                </tr>
+                <>
+                  <tr key={r.repo_id} className="border-t border-border">
+                    <td className="px-4 py-2.5 font-semibold">{r.repo_id}</td>
+                    <td className="px-4 py-2.5 tabular-nums">{r.units.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 tabular-nums">{r.files.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-muted">
+                      {r.languages.length > 3
+                        ? `${r.languages.length} languages`
+                        : r.languages.join(", ") || "—"}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex gap-1.5">
+                        <SmBtn onClick={() => openOverview(r.repo_id)}>overview</SmBtn>
+                        <SmBtn title="Re-embed calls /ingest/reembed — planned operator action">re-embed</SmBtn>
+                        {canManageAccess && (
+                          <SmBtn
+                            onClick={() =>
+                              setExpandedGrants((v) =>
+                                v === r.repo_id ? null : r.repo_id,
+                              )
+                            }
+                          >
+                            {expandedGrants === r.repo_id ? "hide access" : "manage access"}
+                          </SmBtn>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {expandedGrants === r.repo_id && (
+                    <tr key={`${r.repo_id}-grants`} className="border-t border-border">
+                      <td colSpan={5} className="p-0">
+                        <RepoAccessPanel repoId={r.repo_id} />
+                      </td>
+                    </tr>
+                  )}
+                </>
               ))}
             </tbody>
           </table>
@@ -461,5 +489,109 @@ function SmBtn({
     >
       {children}
     </button>
+  );
+}
+
+// ---- Repo access grants (admin only) ---------------------------------------
+
+function RepoAccessPanel({ repoId }: { repoId: string }) {
+  const qc = useQueryClient();
+  const [subjectType, setSubjectType] = useState<"team" | "user">("user");
+  const [subjectId, setSubjectId] = useState("");
+  const [access, setAccess] = useState<"read" | "write" | "admin">("read");
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const grants = useQuery({
+    queryKey: ["repo-grants", repoId],
+    queryFn: () => listGrants(repoId),
+  });
+
+  const create = useMutation({
+    mutationFn: () =>
+      createGrant(repoId, { subject_type: subjectType, subject_id: subjectId.trim(), access }),
+    onSuccess: () => {
+      setSubjectId("");
+      setFormError(null);
+      qc.invalidateQueries({ queryKey: ["repo-grants", repoId] });
+    },
+    onError: (err) =>
+      setFormError(err instanceof Error ? err.message : "Could not create grant"),
+  });
+
+  const del = useMutation({
+    mutationFn: (grantId: string) => deleteGrant(grantId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["repo-grants", repoId] }),
+  });
+
+  const list: RepoGrant[] = grants.data ?? [];
+
+  return (
+    <div className="border-t border-border bg-panel px-4 py-3">
+      <div className="mb-2 text-[12.5px] font-semibold text-muted2">Access grants</div>
+
+      {grants.isError && (
+        <div className="mb-2 text-[12px] text-bad">Could not load grants.</div>
+      )}
+
+      {list.length === 0 && !grants.isLoading ? (
+        <div className="mb-2 text-[12px] text-muted2">No grants — org members access per their role.</div>
+      ) : (
+        <div className="mb-2 space-y-1">
+          {list.map((g) => (
+            <div key={g.id} className="flex items-center gap-2 text-[12.5px]">
+              <span className="rounded-md bg-accentSoft px-1.5 py-0.5 text-[11px] font-bold text-accentInk">
+                {g.subject_type}
+              </span>
+              <span className="font-mono">{g.subject_id}</span>
+              <span className="text-muted">→ {g.access}</span>
+              <button
+                type="button"
+                onClick={() => del.mutate(g.id)}
+                className="ml-auto rounded-md border border-border2 bg-bg px-2 py-0.5 text-[11px] text-muted2 hover:border-bad hover:text-bad"
+              >
+                revoke
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* add grant */}
+      <div className="flex flex-wrap items-end gap-1.5">
+        <select
+          value={subjectType}
+          onChange={(e) => setSubjectType(e.target.value as "team" | "user")}
+          className="rounded-lg border border-border bg-bg px-2.5 py-1 text-[12.5px] outline-none focus:border-accent"
+        >
+          <option value="user">user</option>
+          <option value="team">team</option>
+        </select>
+        <input
+          type="text"
+          value={subjectId}
+          onChange={(e) => setSubjectId(e.target.value)}
+          placeholder="user_id or team_id"
+          className="rounded-lg border border-border bg-bg px-2.5 py-1 font-mono text-[12.5px] outline-none focus:border-accent"
+        />
+        <select
+          value={access}
+          onChange={(e) => setAccess(e.target.value as "read" | "write" | "admin")}
+          className="rounded-lg border border-border bg-bg px-2.5 py-1 text-[12.5px] outline-none focus:border-accent"
+        >
+          <option value="read">read</option>
+          <option value="write">write</option>
+          <option value="admin">admin</option>
+        </select>
+        <button
+          type="button"
+          disabled={!subjectId.trim() || create.isPending}
+          onClick={() => { setFormError(null); create.mutate(); }}
+          className="rounded-lg bg-accent px-3 py-1 text-[12.5px] font-medium text-white hover:bg-accentInk disabled:opacity-50"
+        >
+          {create.isPending ? "Adding…" : "Add grant"}
+        </button>
+      </div>
+      {formError && <div className="mt-1.5 text-[12px] text-bad">{formError}</div>}
+    </div>
   );
 }
