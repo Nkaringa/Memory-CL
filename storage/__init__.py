@@ -38,10 +38,10 @@ __all__ = [
     "RepoRegistryRepository",
     "RepoRegistryRow",
     "RepoSummary",
-    "hash_token",
     "StorageClient",
     "StorageHealth",
     "VectorHit",
     "VectorPoint",
     "VectorRepository",
+    "hash_token",
 ]

@@ -265,9 +265,11 @@ async def _similar_paths(
     basename = file_path.replace("\\", "/").rsplit("/", 1)[-1]
     if not basename:
         return []
+    _d = getattr(getattr(state.postgres.engine, "dialect", None), "name", None)
+    like = "ILIKE" if (_d or "postgresql") == "postgresql" else "LIKE"
     sql = text(
         "SELECT DISTINCT file_path FROM ingestion_units "
-        " WHERE repo_id = :repo_id AND file_path ILIKE :pattern "
+        f" WHERE repo_id = :repo_id AND file_path {like} :pattern "
         " ORDER BY file_path LIMIT :limit"
     )
     try:

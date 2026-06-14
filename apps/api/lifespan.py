@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -77,6 +78,8 @@ def _build_state() -> tuple[
     isn't readable until the engine exists.
     """
     settings = get_settings()
+    if settings.mode == "lite":
+        return _build_lite_state(settings)
     pg = PostgresClient(settings.postgres_url)
     qd = QdrantStorageClient(settings.qdrant_url)
     nj = Neo4jClient(
@@ -102,6 +105,56 @@ def _build_state() -> tuple[
         embedder=None,  # deterministic fallback; upgraded post-refresh
     )
     return state, app_config_repo, repo_registry, runtime, token_cache
+
+
+def _build_lite_state(settings: Settings) -> tuple[
+    AppState, AppConfigRepository, RepoRegistryRepository, RuntimeConfig, TokenCache
+]:
+    """Lite mode: one SQLite db + embedded numpy/python backends, no Docker.
+
+    Same shape as the server `_build_state` so the lifespan body is
+    identical — only the engine room changes. Lite modules are imported
+    lazily so server boot never touches aiosqlite / the lite package.
+    """
+    from storage.lite.api_token_repo import SqliteApiTokenRepository
+    from storage.lite.app_config_repo import SqliteAppConfigRepository
+    from storage.lite.clients import (
+        LiteNeo4jClient,
+        LiteSqliteClient,
+        LiteVectorClient,
+    )
+    from storage.lite.engine import expand_data_dir, make_sqlite_engine
+    from storage.lite.graph_repo import LiteGraphRepository
+    from storage.lite.ingestion_repo import SqliteIngestionRepository
+    from storage.lite.redis_stub import LiteRedisClient
+    from storage.lite.repo_registry_repo import SqliteRepoRegistryRepository
+    from storage.lite.vector_repo import LiteVectorStore
+
+    data_dir = expand_data_dir(settings.lite_data_dir)
+    engine = make_sqlite_engine(data_dir / "data.db")
+    vector_store = LiteVectorStore(engine)
+
+    app_config_repo = SqliteAppConfigRepository(engine)
+    repo_registry = SqliteRepoRegistryRepository(engine)
+    token_cache = TokenCache(SqliteApiTokenRepository(engine))  # type: ignore[arg-type]
+    runtime = RuntimeConfig(app_config_repo, settings)  # type: ignore[arg-type]
+    # The lite backends are duck-typed into AppState's concrete fields — same
+    # methods, different engine room. Splatting an Any-dict keeps the
+    # type-ignores out of the per-arg noise (AppState Protocol-typing is a
+    # later cleanup).
+    state_kwargs: dict[str, Any] = {
+        "postgres": LiteSqliteClient(engine),
+        "qdrant": LiteVectorClient(vector_store),
+        "neo4j": LiteNeo4jClient(),
+        "redis": LiteRedisClient(),
+        "units_repo": SqliteIngestionRepository(engine),
+        "graph_repo": LiteGraphRepository(engine),
+        "vector_repo": vector_store,
+        "embedder": None,  # upgraded to LocalEmbedder post-refresh (lite default)
+    }
+    state = AppState.with_default_embedder(**state_kwargs)
+    _log.info("lite_mode_state_built", data_dir=str(data_dir))
+    return state, app_config_repo, repo_registry, runtime, token_cache  # type: ignore[return-value]
 
 
 async def _seed_app_config_from_env(

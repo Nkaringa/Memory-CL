@@ -41,10 +41,13 @@ async def _find_in_repo(
     """
     from sqlalchemy import text
 
+    # ILIKE on Postgres, LIKE (ASCII case-insensitive) on lite/SQLite.
+    _d = getattr(getattr(state.postgres.engine, "dialect", None), "name", None)
+    like = "ILIKE" if (_d or "postgresql") == "postgresql" else "LIKE"
     sql = text(
         "SELECT unit_id, qualified_name, kind, file_path, line_start, line_end"
         "  FROM ingestion_units"
-        " WHERE repo_id = :repo_id AND qualified_name ILIKE :pattern"
+        f" WHERE repo_id = :repo_id AND qualified_name {like} :pattern"
         " ORDER BY length(qualified_name), qualified_name"
         " LIMIT :limit"
     )

@@ -305,7 +305,8 @@ async def test_metadata_retriever_returns_candidates_with_metadata() -> None:
     assert cands[0].channel == RetrievalChannel.METADATA
     # Filter parameters carry through to SQL.
     assert engine.conn.last_params["pattern"] == "%auth%"
-    assert engine.conn.last_params["no_kind_filter"] is True
+    # With no unit_kinds, the kind clause is omitted entirely (no kinds param).
+    assert "kinds" not in engine.conn.last_params
 
 
 @pytest.mark.asyncio

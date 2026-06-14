@@ -77,7 +77,25 @@ Deep dive: **[ARCHITECTURE.md](ARCHITECTURE.md)** ·
 
 ---
 
-## Quickstart
+## Quickstart — lite mode (no Docker)
+
+The fastest way to try Memory-CL on a laptop. No Docker, no databases — one
+SQLite file under `~/.memcl`, on-device embeddings, runs on demand.
+
+```bash
+pip install memory-cl          # aiosqlite + numpy + fastembed come along
+memcl serve                    # starts on http://127.0.0.1:8000 (opens the UI)
+memcl ingest .                 # ingest the current repo (read straight off disk)
+memcl search "auth flow"       # query it
+```
+
+Same parsing, graph, ranking, retrieval, MCP tools, and UI as the full
+stack — only the storage engine room changes (SQLite + numpy + Python BFS
+instead of Postgres/Qdrant/Neo4j/Redis). Embeddings default to a local model
+(no API key); set `OPENAI_API_KEY` for identical-to-server quality. Best for a
+single user up to ~100k units; beyond that, the server stack below.
+
+## Quickstart — server stack (Docker)
 
 ```bash
 # 1. Bring up the dev stack (postgres, qdrant, neo4j, redis, api)
