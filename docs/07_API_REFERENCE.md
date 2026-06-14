@@ -241,6 +241,51 @@ mismatches the key.
 
 ---
 
+## Organization management — teams + RBAC (Phase 3)
+
+`apps/api/routers/orgs.py`. All endpoints require an authenticated session
+with sufficient role (`owner` or `admin` unless noted).
+
+### Members
+
+| Method · path | Auth required | Notes |
+|---|---|---|
+| `GET /orgs/members` | Session (any role) | List all members of the caller's org. |
+| `PATCH /orgs/members/{user_id}/role` | Owner / admin | Update a member's role (`member` / `viewer` / `admin`). |
+| `DELETE /orgs/members/{user_id}` | Owner / admin | Remove a member from the org. |
+
+### Teams
+
+| Method · path | Auth required | Notes |
+|---|---|---|
+| `POST /orgs/teams` | Owner / admin | Create a team. Body: `{name}`. |
+| `GET /orgs/teams` | Session (any role) | List teams in the caller's org. |
+| `DELETE /orgs/teams/{team_id}` | Owner / admin | Delete a team (removes memberships + grants). |
+| `POST /orgs/teams/{team_id}/members` | Owner / admin | Add a user to a team. Body: `{user_id}`. |
+| `GET /orgs/teams/{team_id}/members` | Session (any role) | List members of a team. |
+| `DELETE /orgs/teams/{team_id}/members/{user_id}` | Owner / admin | Remove a user from a team. |
+
+### Invitations
+
+| Method · path | Auth required | Notes |
+|---|---|---|
+| `POST /orgs/invitations` | Owner / admin | Mint an invitation link for a given role. Returns a one-time token (hash stored; raw token shown once). |
+| `GET /orgs/invitations` | Owner / admin | List pending invitations. |
+| `DELETE /orgs/invitations/{inv_id}` | Owner / admin | Revoke an invitation. |
+| `POST /auth/accept-invite` | None (or session) | Accept an invitation. New users supply `{token, email, password}`; logged-in users supply `{token}` only. |
+
+### Per-repo grants
+
+| Method · path | Auth required | Notes |
+|---|---|---|
+| `POST /orgs/repos/{repo_id}/grants` | Owner / admin | Grant a team or user access to a repo. Body: `{grantee_type: "team"/"user", grantee_id, access_level: "read"/"write"/"admin"}`. |
+| `GET /orgs/repos/{repo_id}/grants` | Owner / admin | List grants for a repo. |
+| `DELETE /orgs/grants/{grant_id}` | Owner / admin | Revoke a specific grant. |
+
+Access levels: `read` — retrieve only; `write` — retrieve + ingest; `admin` — all including grant management. Viewer-role members are capped at `read` regardless of the grant level.
+
+---
+
 ## Human auth — federated login (Phase 2)
 
 `apps/api/routers/auth_oauth.py`. Handles the OAuth / OIDC browser flow and

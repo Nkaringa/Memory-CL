@@ -2,12 +2,13 @@
 
 ← back to [index](00_INDEX.md) · related: [16_AUDIT_AND_GOVERNANCE](16_AUDIT_AND_GOVERNANCE.md), [21_DEPLOYMENT](21_DEPLOYMENT.md), [08_MCP_TOOLING](08_MCP_TOOLING.md)
 
-Four layers of access control:
+Five layers of access control — identity milestone (Phases 1–3) complete:
 
 1. **Human identity** — Organizations, Users, Memberships, and server-side Sessions (Phase 1).
-2. **Auth at the network edge** — `MCP_API_KEY` / named tokens for the agent surface.
-3. **Tenant isolation** — `TenantManager.assert_owns_repo` everywhere.
-4. **Policy engine** — deterministic deny/allow rules.
+2. **Federated login** — OIDC/OAuth providers (GitHub, Google, Microsoft, generic OIDC) alongside local credentials (Phase 2).
+3. **Teams + per-repo RBAC** — Teams, invitations, and fine-grained per-repo grants enforced on the human path (Phase 3).
+4. **Auth at the network edge** — `MCP_API_KEY` / named tokens for the agent surface.
+5. **Tenant isolation + policy engine** — `TenantManager` cross-org isolation; deterministic deny/allow policy rules.
 
 ## Human identity (Phase 1)
 
@@ -108,8 +109,60 @@ as the OAuth subject.
 
 ### What is NOT in Phase 2
 
-**Team invitations, per-repo grants, and fine-grained RBAC** remain Phase 3.
-Roles continue to be org-level (`owner | admin | member | viewer`).
+**Team invitations, per-repo grants, and fine-grained RBAC** — Phase 3 (now complete; see below).
+
+---
+
+## Teams + per-repo RBAC (Phase 3)
+
+Phase 3 completes the identity milestone. Everything in Phases 1–2 stays unchanged.
+
+### Repos belong to orgs
+
+`repo_registry.org_id` stamps every repo with its owning org (default `"default"`). Ingest
+automatically tags the repo with the caller's org. Cross-org repo access is blocked at the
+resolver layer, not just at the policy engine.
+
+### Access model
+
+| Principal | Effective repo access |
+|---|---|
+| **owner / admin** (org role) | Admin-level access to **all repos** in their org — no per-repo grant required. |
+| **member** | Read + write on repos granted via a team or a direct user grant. |
+| **viewer** | Read-only on granted repos; any write-level grant is silently capped at read. |
+| Ungranted member / viewer | **403** on any repo-scoped endpoint (listed repos filtered out of `GET /repos`). |
+| **Agent (API token / MCP key)** | Org-scoped full access to **all repos** in their org — by design (service-token model), not per-repo. The MCP tool surface is unchanged. |
+
+### Teams
+
+An org is subdivided into **teams** (sub-groups). A team can be granted access to one or more
+repos; all members of the team inherit the grant. A user can belong to multiple teams within
+the same org.
+
+### Invitations (self-serve onboarding)
+
+An org admin mints an invitation link. The recipient visits `/accept-invite`:
+- **New user** — provides credentials → created at the invited role → logged in.
+- **Existing logged-in user** → membership added/updated to the invited role.
+
+Invitation state is tracked in the `org_invitations` table (token hash only; raw token shown once).
+
+### Enforced endpoints
+
+All human-path repo endpoints (`GET /repos`, `GET /repos/{id}/*`, `POST /ingest`, etc.) pass
+through `RepoAccessResolver` before hitting storage. The resolver evaluates:
+1. Org membership role (owner/admin → allow all).
+2. Direct user grants (`repo_grants` where `grantee_type="user"`).
+3. Team membership + team grants (`repo_grants` where `grantee_type="team"`).
+
+`GET /repos` returns only repos the caller can access; ungranted repos are silently filtered.
+
+### Non-breaking when unconfigured
+
+When `JWT_SECRET` / auth is unconfigured (dev/bootstrap), no session is resolved and the
+resolver falls through to the existing open mode — every repo endpoint behaves exactly as
+before Phase 3. The current single-org homelab deployment is a no-op: agents carry the default
+org and all repos belong to the default org, so full access is preserved.
 
 ---
 

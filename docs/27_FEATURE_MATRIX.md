@@ -9,7 +9,7 @@ serves a solo developer pointing Claude at a side project, a small team
 sharing a memory server on a LAN VM, and a company that needs hardened
 containers, health gates, and a tamper-evident audit trail. Nothing below
 is aspirational marketing: **every feature in this document was verified
-against the code on 2026-06-14** (file paths inline), and each carries an
+against the code on 2026-06-14** (identity milestone updated 2026-06-14) (file paths inline), and each carries an
 honest maturity label. Where the engine ships scaffolding instead of a
 finished feature, the ledger says so.
 
@@ -54,7 +54,7 @@ Maturity vocabulary used throughout:
 | Web UI (10 pages, mobile nav) | ○ | ✓ | ✓ | functional |
 | Session memory (`update_memory` → Redis) | ○ | ○ | ○ | functional |
 | API-key auth on mutations + MCP | — | ✓ | ✓ | functional |
-| Per-tenant / per-agent identity | — | — | ✓ | planned |
+| Human identity + RBAC (local auth, OIDC, teams, per-repo grants) | — | ✓ | ✓ | functional |
 | Hash-chained audit log + `/audit/verify` | — | ○ | ✓ | functional |
 | Snapshot / replay | — | ○ | ✓ | functional |
 | Health surface + `/status` boot stages | ○ | ✓ | ✓ | stable |
@@ -206,7 +206,7 @@ Everything in Tier 1, plus:
 - **API-key auth** — single shared `MCP_API_KEY` (X-API-Key or Bearer)
   gates MCP execution, `/ingest`, and `/ingest/reembed`
   (`apps/mcp/auth.py`, `native_auth.py`). *Honest limit:* one key for
-  everyone; per-person identity needs a gateway in front (see Tier 3). — **functional**
+  all agents; per-person human identity now ships in Tier 3 (see below). — **functional**
 - **Health + status surface** — `/health/live`, `/health/ready`,
   `/health/dependencies`, and `/status` with 8 named boot stages, safe-mode
   view, feature flags, and served ranking weights. *Why:* "is it down or
@@ -269,13 +269,20 @@ Everything in Tiers 1–2, plus:
   caller-supplied clocks, canonical JSON everywhere; pinned by the
   per-phase golden tests (`tests/test_golden_phase*.py`). — **stable**
 
+### Identity & access control
+- **Human identity + RBAC** — local password auth (Phase 1), OIDC/OAuth federation (Phase 2),
+  and teams + per-repo grants (Phase 3) are all shipped and enforced on the human request
+  path. `RepoAccessResolver` evaluates org role → team grants → direct grants on every
+  human-path repo endpoint. `GET /repos` is filtered; ungranted repos return 403. Cross-org
+  isolation is enforced. Agents (API tokens) are org-scoped with full access to their org's
+  repos — not per-repo — by design. Auth is a no-op when unconfigured (backward compatible
+  with single-org or dev deployments). — **functional**
+- **Governance policy engine** — `TenantManager`, `AccessControl`, and `PolicyEngine`
+  (`core/governance/`) are real, tested library code but **nothing in `apps/` imports them** —
+  they are not on the live request path. The policy-engine layer beyond RBAC remains
+  library-only. — **scaffolding**
+
 ### Scale & multi-tenancy (read this section carefully)
-- **Per-tenant identity / access control** — `TenantManager`,
-  `AccessControl`, and `PolicyEngine` (`core/governance/`) are real,
-  tested library code, but **nothing in `apps/` imports them** — no
-  request path enforces tenant ownership today. Isolation you actually
-  get: `repo_id` scoping + the single shared API key. Per-tenant auth is
-  a gateway-in-front job for now. — **scaffolding** (enforcement: **planned**)
 - **Distributed scale** — shard routers, worker pool, backpressure,
   rate limiting, batching (`core/scaling/`, `infra/distributed/`,
   `core/performance/`) exist with golden tests, but the production
@@ -334,15 +341,15 @@ Everything in Tiers 1–2, plus:
 | 35 | Safe-mode degradation states | scaffolding | `core/safety/safe_mode.py` — reported, never enforced |
 | 36 | Lifecycle (decay / refresh / compaction) | scaffolding | `core/lifecycle/` — not invoked by runtime |
 | 37 | Distributed scale (shards, workers, backpressure) | scaffolding | worker = `sleep infinity`; boot-probe only |
-| 38 | Governance (tenant / policy / access control) | scaffolding | `core/governance/` — not imported by `apps/` |
+| 38 | Governance policy engine (tenant / policy / DENY rules) | scaffolding | `core/governance/` — library only, not imported by `apps/` |
 | 39 | Integrity + diagnostics validators | functional | `core/integrity/` — exercised at boot stage 3 |
-| 40 | Per-tenant / per-agent identity | planned | `SECURITY.md` Gap — gateway required today |
+| 40 | Human identity + RBAC (local auth + OIDC + teams + per-repo grants) | functional | `apps/api/routers/auth*.py`, `orgs.py`, `core/auth/repo_access.py` |
 | 41 | Persistent audit sink wiring | planned | `JsonlFileAuditSink` exists, unwired |
 | 42 | Voyage embedder | planned | `core/embeddings/embedder.py:9` — name only |
 | 43 | Lite mode (no-Docker, `pip install` + `memcl serve`) | functional | `core/config.py` MODE/lite_data_dir, `storage/lite/`, `apps/cli/main.py` serve, tests `test_lite_*.py` |
 | 44 | Worker queue execution (Phase 11 batch ingest) | planned | `docs/14` "provisioned for Phase-11" |
 
-**Tally: 44 features — 20 stable · 14 functional · 6 scaffolding · 4 planned.** (Lite mode shipped; see also embeddings, freshness, named API tokens below.)
+**Tally: 44 features — 20 stable · 15 functional · 6 scaffolding · 3 planned.** (Lite mode + full identity milestone shipped; see also embeddings, freshness, named API tokens.)
 
 ---
 
@@ -372,11 +379,11 @@ Claims found in existing docs/README that disagree with the code as of
 7. **`docs/01_OVERVIEW.md:17`** — "a Python SDK + `memcl` CLI (the
    developer surface)" — omits the TypeScript SDK (`ui/lib/api.ts`),
    which `docs/20_SDK_GUIDE.md` documents.
-8. **`docs/22_SECURITY_AND_ACCESS_CONTROL.md:8`** — "Tenant isolation —
-   `TenantManager.assert_owns_repo` **everywhere**." Nothing in `apps/`
-   imports `TenantManager`, `AccessControl`, or `PolicyEngine`; tenant
-   enforcement is library-only. The doc reads as if it is on the request
-   path.
+8. **`docs/22_SECURITY_AND_ACCESS_CONTROL.md`** — Partially resolved by Phase 3: per-repo RBAC
+   (`RepoAccessResolver`) is now on the human request path. `TenantManager`, `AccessControl`,
+   and `PolicyEngine` (`core/governance/`) remain library-only — the policy-engine layer is
+   still not imported by `apps/`. The "Tenant isolation — `TenantManager.assert_owns_repo`
+   everywhere" claim remains stale for the agent/policy path.
 9. **`SECURITY.md:51` (auth table)** — "`POST /ingest` | None by
    default". Stale: `apps/api/routers/ingest.py:103,165` gate both
    `/ingest` and `/ingest/reembed` with the same `ApiKeyDep` as MCP.
