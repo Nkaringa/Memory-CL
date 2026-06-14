@@ -18,11 +18,13 @@ from storage.repositories import (
     OrgRepository,
     QnameMatch,
     RepoSummary,
+    SessionRepository,
     UserRepository,
     VectorHit,
     VectorPoint,
     VectorRepository,
 )
+from storage.session_repo import PostgresSessionRepository, SessionRow
 from storage.user_repo import PostgresUserRepository, UserRow
 
 __all__ = [
@@ -45,6 +47,7 @@ __all__ = [
     "PostgresIngestionRepository",
     "PostgresMembershipRepository",
     "PostgresOrgRepository",
+    "PostgresSessionRepository",
     "PostgresUserRepository",
     "QdrantStorageClient",
     "QdrantVectorRepository",
@@ -53,6 +56,8 @@ __all__ = [
     "RepoRegistryRepository",
     "RepoRegistryRow",
     "RepoSummary",
+    "SessionRepository",
+    "SessionRow",
     "StorageClient",
     "StorageHealth",
     "UserRepository",

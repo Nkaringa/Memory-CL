@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from schemas import GraphEdge, GraphNode, IngestionUnit
@@ -9,6 +10,7 @@ from schemas import GraphEdge, GraphNode, IngestionUnit
 if TYPE_CHECKING:
     from storage.membership_repo import MembershipRow
     from storage.org_repo import OrgRow
+    from storage.session_repo import SessionRow
     from storage.user_repo import UserRow
 
 
@@ -231,3 +233,15 @@ class MembershipRepository(Protocol):
     async def list_orgs_for_user(self, user_id: str) -> "list[MembershipRow]": ...
     async def list_members(self, *, org_id: str) -> "list[MembershipRow]": ...
     async def set_role(self, *, user_id: str, org_id: str, role: str) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# Sessions — server-side session store (cookie-hash keyed)
+# ---------------------------------------------------------------------------
+@runtime_checkable
+class SessionRepository(Protocol):
+    async def ensure_schema(self) -> None: ...
+    async def create_session(self, *, session_id: str, user_id: str, active_org_id: str, csrf_token: str, expires_at: datetime) -> "SessionRow": ...
+    async def get_active(self, session_id: str) -> "SessionRow | None": ...
+    async def revoke(self, session_id: str) -> None: ...
+    async def list_active_session_ids(self) -> "set[str]": ...
