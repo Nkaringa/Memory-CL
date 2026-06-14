@@ -73,30 +73,33 @@ async def oauth_callback(
         raise HTTPException(status_code=400, detail="oauth exchange failed")
 
     # Step 4: resolve (subject, verified_email, display_name)
-    if provider_type == "github":
-        u = (await client.get("user")).json()
-        subject = str(u["id"])
-        emails = (await client.get("user/emails")).json()
-        # Prefer verified+primary, then any verified
-        verified_email = next(
-            (e["email"] for e in emails if e.get("verified") and e.get("primary")),
-            None,
-        ) or next(
-            (e["email"] for e in emails if e.get("verified")),
-            None,
-        )
-        display_name = u.get("name") or u.get("login") or verified_email
-    else:
-        # OIDC (google, microsoft, generic)
-        info = token.get("userinfo") or {}
-        subject = info.get("sub")
-        if provider_type == "microsoft":
-            # Entra ID emails are always verified; claim may be absent (default True)
-            verified_email = info.get("email") if info.get("email_verified", True) else None
+    try:
+        if provider_type == "github":
+            u = (await client.get("user")).json()
+            subject = str(u["id"])
+            emails = (await client.get("user/emails")).json()
+            # Prefer verified+primary, then any verified
+            verified_email = next(
+                (e["email"] for e in emails if e.get("verified") and e.get("primary")),
+                None,
+            ) or next(
+                (e["email"] for e in emails if e.get("verified")),
+                None,
+            )
+            display_name = u.get("name") or u.get("login") or verified_email
         else:
-            # google / generic OIDC: require explicit email_verified=True
-            verified_email = info.get("email") if info.get("email_verified") else None
-        display_name = info.get("name") or verified_email
+            # OIDC (google, microsoft, generic)
+            info = token.get("userinfo") or {}
+            subject = info.get("sub")
+            if provider_type == "microsoft":
+                # Entra ID emails are always verified; claim may be absent (default True)
+                verified_email = info.get("email") if info.get("email_verified", True) else None
+            else:
+                # google / generic OIDC: require explicit email_verified=True
+                verified_email = info.get("email") if info.get("email_verified") else None
+            display_name = info.get("name") or verified_email
+    except Exception:
+        raise HTTPException(status_code=400, detail="could not read profile from provider")
 
     if not subject:
         raise HTTPException(status_code=400, detail="no subject from provider")

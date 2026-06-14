@@ -191,3 +191,59 @@ async def test_github_uses_verified_primary_email(client_and_app):
     body = me.json()
     assert body["authenticated"] is True
     assert body["user"]["email"] == "main@x.c"
+
+
+@pytest.mark.anyio
+async def test_github_all_unverified_refused(client_and_app):
+    c, app = client_and_app
+    from tests.support.oauth_fakes import install_fake_provider
+
+    await install_fake_provider(
+        app,
+        provider_id="p-gh",
+        provider_type="github",
+        github_user={"id": 777, "login": "gh", "name": "GH"},
+        github_emails=[
+            {"email": "a@x.c", "verified": False, "primary": True},
+            {"email": "b@x.c", "verified": False, "primary": False},
+        ],
+    )
+    r = await c.get("/auth/oauth/p-gh/callback?code=x&state=y", follow_redirects=False)
+    assert r.status_code == 400
+    assert (await c.get("/auth/me")).json()["authenticated"] is False
+
+
+@pytest.mark.anyio
+async def test_microsoft_unverified_refused(client_and_app):
+    c, app = client_and_app
+    from tests.support.oauth_fakes import install_fake_provider
+
+    await install_fake_provider(
+        app,
+        provider_id="p-ms",
+        provider_type="microsoft",
+        userinfo={"sub": "ms-1", "email": "u@x.c", "email_verified": False, "name": "U"},
+    )
+    r = await c.get("/auth/oauth/p-ms/callback?code=x&state=y", follow_redirects=False)
+    assert r.status_code == 400
+    assert (await c.get("/auth/me")).json()["authenticated"] is False
+
+
+@pytest.mark.anyio
+async def test_microsoft_absent_email_verified_treated_as_verified(client_and_app):
+    c, app = client_and_app
+    from tests.support.oauth_fakes import install_fake_provider
+
+    await install_fake_provider(
+        app,
+        provider_id="p-ms2",
+        provider_type="microsoft",
+        userinfo={"sub": "ms-2", "email": "ok@x.c", "name": "OK"},
+    )
+    r = await c.get("/auth/oauth/p-ms2/callback?code=x&state=y", follow_redirects=False)
+    assert r.status_code == 302, f"Expected 302, got {r.status_code}: {r.text}"
+
+    me = await c.get("/auth/me")
+    body = me.json()
+    assert body["authenticated"] is True
+    assert body["user"]["email"] == "ok@x.c"
