@@ -14,8 +14,10 @@ import type {
   EmbeddingMode,
   EmbeddingModeResult,
   FreshnessList,
+  IssuedToken,
   McpKeyResponse,
   SyncResult,
+  TokenList,
   WebhookSecretResult,
   IngestRequest,
   IngestResponse,
@@ -211,6 +213,19 @@ export class AsyncMemoryClient {
   /** Generate (or replace) the git-webhook signing secret. Returned once. */
   generateWebhookSecret(): Promise<WebhookSecretResult> {
     return this.post<WebhookSecretResult>("/config/webhook-secret/generate", {});
+  }
+
+  // ------ named API tokens ------------------------------------------------
+  listTokens(): Promise<TokenList> {
+    return this.get<TokenList>("/config/tokens");
+  }
+
+  issueToken(name: string): Promise<IssuedToken> {
+    return this.post<IssuedToken>("/config/tokens", { name });
+  }
+
+  revokeToken(id: string): Promise<unknown> {
+    return this.del<unknown>(`/config/tokens/${encodeURIComponent(id)}`);
   }
 
   // ------ freshness (Phase 3) ---------------------------------------------

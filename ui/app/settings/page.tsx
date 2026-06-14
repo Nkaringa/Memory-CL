@@ -6,7 +6,7 @@ import { useState } from "react";
 import { getMemoryClient } from "@/lib/api";
 import { PageHeader, Panel, Btn } from "@/components/shell/primitives";
 import { copyToClipboard } from "@/lib/utils";
-import type { EmbeddingMode, FeatureWeightsView } from "@/lib/types";
+import type { ApiToken, EmbeddingMode, FeatureWeightsView } from "@/lib/types";
 
 // Pinned Phase-4 defaults — used when the backend omits feature_weights.
 const DEFAULT_WEIGHTS: FeatureWeightsView = {
@@ -49,6 +49,8 @@ export default function SettingsPage() {
       />
 
       <AccessKeysPanel />
+
+      <TokensPanel />
 
       <WebhooksPanel />
 
@@ -307,6 +309,128 @@ function Row({ k, children }: { k: string; children: React.ReactNode }) {
       <span className="text-muted2">{k}</span>
       <span>{children}</span>
     </div>
+  );
+}
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return "never";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "—";
+  const secs = Math.max(0, (Date.now() - then) / 1000);
+  if (secs < 60) return "just now";
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
+}
+
+/** Named, revocable API tokens — issue one per agent/machine, revoke any
+ *  individually. The legacy MCP key still works; these are additive. */
+function TokensPanel() {
+  const client = getMemoryClient();
+  const qc = useQueryClient();
+  const tokens = useQuery({ queryKey: ["tokens"], queryFn: () => client.listTokens() });
+  const [name, setName] = useState("");
+  const [issued, setIssued] = useState<{ name: string; token: string } | null>(null);
+
+  const create = useMutation({
+    mutationFn: () => client.issueToken(name.trim()),
+    onSuccess: (r) => {
+      setIssued({ name: r.name, token: r.token });
+      setName("");
+      qc.invalidateQueries({ queryKey: ["tokens"] });
+    },
+  });
+  const revoke = useMutation({
+    mutationFn: (id: string) => client.revokeToken(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tokens"] }),
+  });
+
+  const list: ApiToken[] = tokens.data?.tokens ?? [];
+
+  return (
+    <Panel title="API tokens" className="mb-3.5">
+      <div className="px-4 py-4">
+        <div className="mb-3 text-[12.5px] text-muted">
+          Named tokens — one per agent or machine. Each works everywhere the access key works, and you
+          can revoke any one individually (no need to rotate the shared key). The key above still works.
+        </div>
+
+        {/* create */}
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="token name (e.g. laptop, ci)"
+            className="w-full max-w-[280px] rounded-lg border border-border2 bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+          />
+          <Btn
+            primary
+            onClick={() => create.mutate()}
+            className={!name.trim() || create.isPending ? "pointer-events-none opacity-50" : ""}
+          >
+            {create.isPending ? "Creating…" : "Create token"}
+          </Btn>
+        </div>
+
+        {issued ? (
+          <div className="mb-3">
+            <div className="mb-2 flex items-center gap-2.5 rounded-lg border border-[#f3e2c0] bg-warnSoft px-3.5 py-2.5 text-[12.5px] text-[#8a5a00]">
+              Save <b>{issued.name}</b> now — it won&apos;t be shown again.
+            </div>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-lg bg-[#1d1d1b] px-4 py-3 font-mono text-[12.5px] text-[#e6e6e6]">
+              {issued.token}
+            </pre>
+            <div className="mt-2 flex gap-2">
+              <CopyBtn text={issued.token}>copy token</CopyBtn>
+              <Btn onClick={() => setIssued(null)}>done</Btn>
+            </div>
+          </div>
+        ) : null}
+
+        {/* list */}
+        {list.length === 0 ? (
+          <div className="text-[12.5px] text-muted2">No named tokens yet.</div>
+        ) : (
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="text-[11.5px] uppercase tracking-wide text-muted">
+                <th className="py-2 text-left font-semibold">name</th>
+                <th className="py-2 text-left font-semibold">token</th>
+                <th className="py-2 text-left font-semibold">last used</th>
+                <th className="py-2 text-left font-semibold">status</th>
+                <th className="py-2 text-right font-semibold"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((t) => (
+                <tr key={t.id} className="border-t border-border">
+                  <td className="py-2 font-medium">{t.name}</td>
+                  <td className="py-2 font-mono text-muted">{t.token_hint}</td>
+                  <td className="py-2 text-muted">{relativeTime(t.last_used_at)}</td>
+                  <td className="py-2">
+                    {t.revoked ? (
+                      <span className="text-bad">revoked</span>
+                    ) : (
+                      <span className="text-ok">active</span>
+                    )}
+                  </td>
+                  <td className="py-2 text-right">
+                    {!t.revoked ? (
+                      <button
+                        onClick={() => revoke.mutate(t.id)}
+                        className="rounded-md border border-border2 bg-bg px-2.5 py-1 text-[12px] font-medium text-muted2 hover:border-bad hover:text-bad"
+                      >
+                        revoke
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </Panel>
   );
 }
 
