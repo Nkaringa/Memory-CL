@@ -1,3 +1,4 @@
+from storage.api_token_repo import ApiTokenRepository, ApiTokenRow, hash_token
 from storage.app_config_repo import AppConfigRepository, AppConfigRow
 from storage.base import StorageClient, StorageHealth
 from storage.neo4j import Neo4jClient
@@ -19,6 +20,8 @@ from storage.repositories import (
 )
 
 __all__ = [
+    "ApiTokenRepository",
+    "ApiTokenRow",
     "AppConfigRepository",
     "AppConfigRow",
     "EdgeNotAllowed",
@@ -35,6 +38,7 @@ __all__ = [
     "RepoRegistryRepository",
     "RepoRegistryRow",
     "RepoSummary",
+    "hash_token",
     "StorageClient",
     "StorageHealth",
     "VectorHit",

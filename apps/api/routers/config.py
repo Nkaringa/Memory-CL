@@ -22,11 +22,12 @@ SECURITY
 from __future__ import annotations
 
 import secrets
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from apps.api.dependencies import AppStateDep, RuntimeConfigDep
+from apps.api.dependencies import AppStateDep, RuntimeConfigDep, TokenCacheDep
 from apps.api.embedding_runtime import reindex_repo
 from apps.mcp.auth import ApiKeyDep
 from core import get_logger, get_settings
@@ -294,4 +295,92 @@ async def complete_onboarding(
     _require_bootstrap_or_authed(runtime, api_key)
     await runtime.repo.set_onboarding_completed(True)
     await runtime.refresh()
+    return OkResponse()
+
+
+# ---------------------------------------------------------------------------
+# Named, revocable API tokens
+# ---------------------------------------------------------------------------
+class IssueTokenRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=128)
+
+
+class IssuedTokenResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    name: str
+    token: str  # the raw secret — shown ONCE
+    token_hint: str
+
+
+class TokenView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    name: str
+    token_hint: str
+    created_at: datetime | None
+    last_used_at: datetime | None
+    revoked: bool
+
+
+class TokenListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tokens: list[TokenView]
+
+
+@router.post("/tokens", response_model=IssuedTokenResponse)
+async def issue_token(
+    body: IssueTokenRequest,
+    runtime: RuntimeConfigDep,
+    tokens: TokenCacheDep,
+    api_key: ApiKeyDep,
+) -> IssuedTokenResponse:
+    """Mint a named API token. The raw token is returned ONCE — copy it now.
+    Works everywhere the MCP key works; revoke it individually later.
+    Bootstrap-or-authed (open only while the instance is unconfigured)."""
+    _require_bootstrap_or_authed(runtime, api_key)
+    raw, row = await tokens.repo.issue(body.name)
+    await tokens.refresh()  # the new token is valid immediately
+    return IssuedTokenResponse(
+        id=row.id, name=row.name, token=raw, token_hint=row.token_hint
+    )
+
+
+@router.get("/tokens", response_model=TokenListResponse)
+async def list_tokens(
+    runtime: RuntimeConfigDep,
+    tokens: TokenCacheDep,
+    api_key: ApiKeyDep,
+) -> TokenListResponse:
+    """List named tokens (masked; never the raw value). Bootstrap-or-authed."""
+    _require_bootstrap_or_authed(runtime, api_key)
+    rows = await tokens.repo.list_all()
+    return TokenListResponse(tokens=[
+        TokenView(
+            id=r.id, name=r.name, token_hint=r.token_hint,
+            created_at=r.created_at, last_used_at=r.last_used_at,
+            revoked=r.revoked,
+        )
+        for r in rows
+    ])
+
+
+@router.delete("/tokens/{token_id}", response_model=OkResponse)
+async def revoke_token(
+    token_id: str,
+    runtime: RuntimeConfigDep,
+    tokens: TokenCacheDep,
+    api_key: ApiKeyDep,
+) -> OkResponse:
+    """Revoke a named token immediately (next request with it fails).
+    Bootstrap-or-authed."""
+    _require_bootstrap_or_authed(runtime, api_key)
+    revoked = await tokens.repo.revoke(token_id)
+    if not revoked:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="unknown or already-revoked token",
+        )
+    await tokens.refresh()
     return OkResponse()

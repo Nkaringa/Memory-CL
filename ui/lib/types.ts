@@ -374,6 +374,28 @@ export interface WebhookSecretResult {
   secret: string;
 }
 
+// ---- Named API tokens -----------------------------------------------------
+export interface ApiToken {
+  id: string;
+  name: string;
+  token_hint: string;
+  created_at: string | null;
+  last_used_at: string | null;
+  revoked: boolean;
+}
+
+export interface TokenList {
+  tokens: ApiToken[];
+}
+
+/** One-time raw token reveal from issue. */
+export interface IssuedToken {
+  id: string;
+  name: string;
+  token: string;
+  token_hint: string;
+}
+
 /** One-time key reveal from generate / rotate. */
 export interface McpKeyResponse {
   api_key: string;

@@ -328,6 +328,37 @@ async def _cmd_freshness(
     return render.render_freshness(ui, data)
 
 
+async def _cmd_token(
+    client: AsyncMemoryClient, args: argparse.Namespace, ui: UI,
+    settings: CliSettings,
+) -> int:
+    cmd = getattr(args, "token_cmd", None) or "list"
+    if cmd == "create":
+        res = await client.issue_token(name=args.name)
+        if _json_mode(args):
+            _emit(res)
+            return 0
+        ui.out.print(
+            f"[green]✓[/green] token [bold]{res['name']}[/bold] created — "
+            "save it now, it won't be shown again:"
+        )
+        ui.out.print(res["token"])
+        return 0
+    if cmd == "revoke":
+        res = await client.revoke_token(token_id=args.id)
+        if _json_mode(args):
+            _emit(res)
+            return 0
+        ui.out.print(f"[green]✓[/green] revoked token [bold]{args.id}[/bold]")
+        return 0
+    # default: list
+    data = await client.list_tokens()
+    if _json_mode(args):
+        _emit(data)
+        return 0
+    return render.render_tokens(ui, data)
+
+
 async def _cmd_search(
     client: AsyncMemoryClient, args: argparse.Namespace, ui: UI,
     settings: CliSettings,
@@ -957,6 +988,18 @@ def build_parser() -> argparse.ArgumentParser:
         pf.add_argument("repo_id", help="repo id")
         pf.set_defaults(func=_cmd_freshness)
     p_fresh.set_defaults(func=_cmd_freshness)
+
+    p_token = sub.add_parser(
+        "token", parents=[common], help="manage named, revocable API tokens",
+    )
+    token_sub = p_token.add_subparsers(dest="token_cmd", metavar="<subcommand>")
+    pt_create = token_sub.add_parser("create", parents=[common], help="mint a named token")
+    pt_create.add_argument("name", help="a label for the token (e.g. laptop, ci)")
+    pt_create.set_defaults(func=_cmd_token)
+    pt_revoke = token_sub.add_parser("revoke", parents=[common], help="revoke a token by id")
+    pt_revoke.add_argument("id", help="token id (from `memcl token list`)")
+    pt_revoke.set_defaults(func=_cmd_token)
+    p_token.set_defaults(func=_cmd_token)
 
     p_search = sub.add_parser(
         "search", parents=[common],

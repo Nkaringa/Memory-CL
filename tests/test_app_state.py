@@ -76,7 +76,7 @@ async def test_query_embedder_is_local_for_local_mode() -> None:
 def test_build_state_returns_deterministic_placeholder_embedder() -> None:
     """`_build_state` runs before storage connects, so it always wires the
     deterministic fallback; the lifespan upgrades it post-refresh."""
-    state, _cfg_repo, _registry, _runtime_cfg = _build_state()
+    state, _cfg_repo, _registry, _runtime_cfg, _token_cache = _build_state()
     assert isinstance(state.embedder, DeterministicEmbedder)
 
 

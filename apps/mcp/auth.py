@@ -13,6 +13,7 @@ from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, status
 
+from apps.mcp.token_auth import auth_is_configured, credential_accepted
 from core import get_settings
 
 
@@ -57,10 +58,14 @@ def require_mcp_api_key(
     Returns the matched key (sans transport prefix) so downstream
     handlers can include it in audit metadata when desired. The bare
     presence of a key never leaks back to the response body.
+
+    Accepts the legacy single MCP key OR any active named token (the
+    revocable tokens). Auth is enforced when either is configured.
     """
     expected = _resolve_expected_key(request)
-    if expected is None:
-        return None  # dev mode
+    token_cache = getattr(request.app.state, "token_cache", None)
+    if not auth_is_configured(expected, token_cache):
+        return None  # dev mode — nothing configured
 
     presented = _extract_api_key(x_api_key, authorization)
     if presented is None:
@@ -69,7 +74,7 @@ def require_mcp_api_key(
             detail="missing API key",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if presented != expected:
+    if not credential_accepted(presented, expected, token_cache):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid API key",

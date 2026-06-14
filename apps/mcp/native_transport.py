@@ -44,6 +44,7 @@ def attach_native_mcp(
     registry: ToolRegistry,
     executor: ToolExecutor,
     get_runtime_config: Callable[[], Any] | None = None,
+    get_token_cache: Callable[[], Any] | None = None,
 ) -> NativeMcpHandle:
     """Mount native MCP transports on the running FastAPI app.
 
@@ -70,7 +71,9 @@ def attach_native_mcp(
         Mount(
             MCP_SSE_PATH,
             app=McpApiKeyMiddleware(
-                sse_app, get_runtime_config=get_runtime_config
+                sse_app,
+                get_runtime_config=get_runtime_config,
+                get_token_cache=get_token_cache,
             ),
             name="mcp-sse",
         ),
@@ -79,7 +82,9 @@ def attach_native_mcp(
         Mount(
             MCP_HTTP_PATH,
             app=McpApiKeyMiddleware(
-                http_app, get_runtime_config=get_runtime_config
+                http_app,
+                get_runtime_config=get_runtime_config,
+                get_token_cache=get_token_cache,
             ),
             name="mcp-http",
         ),

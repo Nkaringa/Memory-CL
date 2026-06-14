@@ -441,6 +441,33 @@ def render_freshness(ui: UI, data: dict) -> int:
 
 
 # ---------------------------------------------------------------------------
+# tokens
+# ---------------------------------------------------------------------------
+def render_tokens(ui: UI, data: dict) -> int:
+    toks = data.get("tokens", [])
+    if not toks:
+        ui.out.print("No named tokens yet.")
+        ui.hint("create one: memcl token create <name>")
+        return 0
+    table = Table(title=None, header_style="bold")
+    table.add_column("id")
+    table.add_column("name")
+    table.add_column("token")
+    table.add_column("last used")
+    table.add_column("status")
+    for t in toks:
+        used = (t.get("last_used_at") or "—")
+        used = used[:19].replace("T", " ") if used != "—" else "—"
+        status = "[red]revoked[/red]" if t.get("revoked") else "[green]active[/green]"
+        table.add_row(
+            escape(t.get("id", "")), escape(t.get("name", "")),
+            escape(t.get("token_hint", "")), used, status,
+        )
+    ui.out.print(table)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # doctor
 # ---------------------------------------------------------------------------
 def render_check(
@@ -468,4 +495,5 @@ __all__ = [
     "render_search",
     "render_status",
     "render_symbols",
+    "render_tokens",
 ]
