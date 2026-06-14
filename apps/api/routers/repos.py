@@ -7,10 +7,12 @@ a ``repo_id``.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, ConfigDict
 
+from apps.api.auth_deps import SoftPrincipalDep
 from apps.api.dependencies import AppStateDep
+from apps.api.repo_access import assert_repo_access, filter_repos_for_principal
 
 router = APIRouter(prefix="/repos", tags=["repos"])
 
@@ -78,9 +80,14 @@ _MAX_GRAPH_NODES = 20_000
 
 
 @router.get("", response_model=ReposResponse)
-async def list_repos(state: AppStateDep) -> ReposResponse:
+async def list_repos(
+    request: Request,
+    state: AppStateDep,
+    principal: SoftPrincipalDep,
+) -> ReposResponse:
     """One aggregate row per ingested repo: unit/file counts + languages."""
     summaries = await state.units_repo.list_repos()
+    visible = await filter_repos_for_principal(request, principal, list(summaries), state)
 
     from schemas.base import SCHEMA_VERSION
     return ReposResponse(
@@ -92,7 +99,7 @@ async def list_repos(state: AppStateDep) -> ReposResponse:
                 files=s.files,
                 languages=sorted(s.languages),
             )
-            for s in summaries
+            for s in visible
         ],
     )
 
@@ -100,11 +107,14 @@ async def list_repos(state: AppStateDep) -> ReposResponse:
 @router.get("/{repo_id}/qnames", response_model=QnamesResponse)
 async def search_qnames(
     repo_id: str,
+    request: Request,
     state: AppStateDep,
+    principal: SoftPrincipalDep,
     q: str = Query(min_length=1, description="substring to match (case-insensitive)"),
     limit: int = Query(default=20, gt=0),
 ) -> QnamesResponse:
     """Qualified-name autocomplete: substring matches, shortest first."""
+    await assert_repo_access(request, principal, repo_id, "read", state)
     matches = await state.units_repo.search_qnames(repo_id, q, limit=min(limit, 100))
     return QnamesResponse(
         repo_id=repo_id,
@@ -118,7 +128,9 @@ async def search_qnames(
 @router.get("/{repo_id}/graph", response_model=RepoGraphResponse)
 async def repo_graph(
     repo_id: str,
+    request: Request,
     state: AppStateDep,
+    principal: SoftPrincipalDep,
     include_external: bool = Query(
         default=False, description="include unresolved External nodes"
     ),
@@ -133,6 +145,7 @@ async def repo_graph(
     `max_nodes` nodes (a false positive: the graph is complete but the
     count equals the cap, so we cannot tell without a second query).
     """
+    await assert_repo_access(request, principal, repo_id, "read", state)
     max_nodes = min(max_nodes, _MAX_GRAPH_NODES)
     nodes, edges = await state.graph_repo.repo_graph(
         repo_id, include_external=include_external, max_nodes=max_nodes

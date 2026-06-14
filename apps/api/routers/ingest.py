@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from apps.api.auth_deps import SoftPrincipalDep
 from apps.api.dependencies import AppStateDep
 from apps.api.embedding_runtime import (
     OPENAI_VECTOR_SIZE,
@@ -13,6 +14,7 @@ from apps.api.embedding_runtime import (
     build_runtime_embedder,
 )
 from apps.api.state import AppState
+from apps.api.repo_access import assert_repo_access
 from apps.mcp.auth import ApiKeyDep
 from core import get_settings
 from core.config import Settings
@@ -209,6 +211,7 @@ async def ingest_repo(
     request: Request,
     state: AppStateDep,
     api_key: ApiKeyDep,  # auth enforced here, same dependency as /mcp/tools
+    principal: SoftPrincipalDep,
 ) -> IngestResponse:
     """Trigger ingestion of `repo_path` under tenant `repo_id` at `commit_sha`.
 
@@ -219,6 +222,10 @@ async def ingest_repo(
     in the freshness registry as a `local` repo (persisting `repo_path` so
     the watcher can keep it fresh).
     """
+    # Per-repo RBAC: non-breaking (no-op) when auth is unconfigured or caller
+    # is unauthenticated; otherwise requires write access on this repo.
+    await assert_repo_access(request, principal, req.repo_id, "write", state)
+
     runtime = getattr(request.app.state, "runtime_config", None)
     try:
         outcome = await run_ingest(
@@ -235,10 +242,12 @@ async def ingest_repo(
         ) from exc
 
     # Register/refresh this repo in the freshness registry (local source).
+    # Stamp org_id from the authenticated principal (fallback "default").
     # None-safe: test apps without the registry wired just skip it.
+    org_id = principal.org_id if principal.is_authenticated else "default"
     registry = getattr(request.app.state, "repo_registry", None)
     if registry is not None:
-        await registry.upsert_local(req.repo_id, req.repo_path, req.commit_sha)
+        await registry.upsert_local(req.repo_id, req.repo_path, req.commit_sha, org_id=org_id)
 
     return IngestResponse(
         repo_id=outcome.repo_id,
@@ -259,6 +268,7 @@ async def reembed_repo(
     request: Request,
     state: AppStateDep,
     api_key: ApiKeyDep,  # auth enforced here — reembed spends provider money
+    principal: SoftPrincipalDep,
 ) -> ReembedResponse:
     """Backfill real vectors for every unit already ingested for `repo_id`.
 
@@ -268,6 +278,10 @@ async def reembed_repo(
     `failed_batches`) and the run continues. Only one reembed per repo
     may be in flight at a time — concurrent requests get a 409.
     """
+    # Per-repo RBAC: non-breaking (no-op) when auth is unconfigured or caller
+    # is unauthenticated; otherwise requires write access on this repo.
+    await assert_repo_access(request, principal, req.repo_id, "write", state)
+
     settings = get_settings()
     runtime = getattr(request.app.state, "runtime_config", None)
     embeddings_on = (

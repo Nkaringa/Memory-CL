@@ -3,10 +3,12 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from apps.api.auth_deps import SoftPrincipalDep
 from apps.api.dependencies import AppStateDep
+from apps.api.repo_access import assert_repo_access
 from core import get_settings
 from core.context import ContextAssembler
 from core.context.context_assembler import AssemblyOptions
@@ -48,13 +50,19 @@ class RetrieveResponse(BaseModel):
     response_model=RetrieveResponse,
     status_code=status.HTTP_200_OK,
 )
-async def retrieve(query: Query, state: AppStateDep) -> RetrieveResponse:
+async def retrieve(
+    query: Query,
+    request: Request,
+    state: AppStateDep,
+    principal: SoftPrincipalDep,
+) -> RetrieveResponse:
     """Run hybrid retrieval and return a packed context.
 
     The endpoint is purely deterministic given the same system state:
     same query text + same backend contents → identical packet bytes.
     Channel failures degrade gracefully (recorded in `failed_channels`).
     """
+    await assert_repo_access(request, principal, query.repo_id, "read", state)
     start = time.perf_counter()
     settings = get_settings()
     ctx = RetrievalContext(repo_id=query.repo_id, query_text=query.text)
