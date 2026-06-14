@@ -159,7 +159,7 @@ asyncio.run(main())
 PY
 ```
 
-You should see the seven tool names. Same shape on
+You should see all 14 tool names. Same shape on
 `/mcp/http` via `mcp.client.streamable_http.streamable_http_client`.
 
 ---

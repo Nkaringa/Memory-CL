@@ -7,6 +7,17 @@ isn't defined here, please add it.
 
 ---
 
+### API token
+A named, revocable authentication credential (the `api_tokens` table). Issue
+many — one per agent/machine — and revoke any individually without rotating
+the shared `MCP_API_KEY`. Only a SHA-256 hash is stored; the raw value is shown
+once. Managed via `/config/tokens` and `memcl token`.
+
+### App config
+The single-row Postgres `app_config` table holding runtime-settable config
+(MCP key, OpenAI key, embedding mode, webhook secret). Read via `RuntimeConfig`
+with **Postgres-over-env** precedence — falls back to env when unset.
+
 ### Audit chain
 Append-only, hash-linked log of every governance / MCP / policy
 decision. Each entry's `hash = SHA256(prev_hash || canonical_json(payload))`.
@@ -88,6 +99,16 @@ write. See [11](11_GRAPH_SYSTEM.md).
 bases. Skipped by retrieval, dimmed in the UI, surfaced by
 `get_risks`. See [11](11_GRAPH_SYSTEM.md).
 
+### Embedding mode
+The embedding provider choice: `openai` (text-embedding-3-small, 1536-dim,
+needs a key) or `local` (on-device fastembed bge-small, 384-dim, no key).
+Set at runtime via `POST /config/embedding-mode`; switching rebuilds + re-embeds.
+
+### Freshness
+Auto-reingest so the memory tracks the code. A filesystem **watcher** keeps
+local (mounted) repos fresh; **polling** keeps managed (git-URL) repos fresh; a
+signature-verified git push **webhook** (`/webhooks/git`) triggers it instantly.
+
 ### Feature weights
 The mandated Phase-4 ranking constants:
 `semantic=0.35 / graph=0.25 / recency=0.20 / importance=0.15 / feedback=0.05`.
@@ -111,6 +132,12 @@ The FastAPI startup/shutdown context manager
 (`apps/api/lifespan.py`). Runs the boot sequence + wires
 `AppState`.
 
+### Lite mode
+The no-Docker deployment: `MODE=lite` swaps the server stack
+(Postgres/Qdrant/Neo4j/Redis) for embedded SQLite + brute-force numpy vector
+search + Python-BFS graph, all in one process under `~/.memcl`. Start with
+`memcl serve`. Single-user, ~100k units; beyond that, the server tier.
+
 ### MCP (Model Context Protocol)
 The Phase-5 agent surface. Seven mandated tools, hash-chained
 audit, in-band errors. See [08](08_MCP_TOOLING.md).
@@ -122,6 +149,12 @@ production. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
 ### `memcl`
 The Phase-9 console-script CLI. Six subcommands, JSON stdout,
 deterministic. See [19](19_CLI_REFERENCE.md).
+
+### Local repo / Managed repo
+The two freshness source models. **Local**: code already on a mounted path
+(`/repos/<name>`) that someone else keeps current; freshness via the watcher.
+**Managed**: a git URL Memory-CL clones into `/managed/<id>` and keeps pulled;
+freshness via polling (or the webhook).
 
 ### `node_id`
 A graph node's primary key. Equal to `unit_id` for non-EXTERNAL
@@ -158,6 +191,11 @@ carries it. Sharding is per-repo.
 ### `request_id`
 A 16-hex-char identifier per MCP call. Surfaces in audit + logs +
 spans for end-to-end tracing.
+
+### Runtime config
+The no-restart configuration layer (`core/config_runtime.RuntimeConfig` over
+`app_config`). The `/config` endpoints + the `/setup` wizard mutate it live;
+auth, embedder, and webhook verification read it on every request.
 
 ### Safe mode
 Process-wide read-only flag controlled by
@@ -202,3 +240,8 @@ backoff retry. See [14](14_DISTRIBUTED_SYSTEM.md).
 ---
 
 ← back to [index](00_INDEX.md)
+
+### Webhook (git)
+`POST /webhooks/git` — receives GitHub/GitLab push events, verifies the
+signature (GitHub HMAC / GitLab token) against the configured secret, and
+triggers a managed repo's reingest. Rejects everything when no secret is set.

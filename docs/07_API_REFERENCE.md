@@ -80,7 +80,7 @@ Full production posture in one call. Used by `/dashboard`, the CLI
     {"name": "storage_init", "order": 1, "status": "ok", "error": ""},
     ...
   ],
-  "mcp_tool_count": 7,
+  "mcp_tool_count": 14,
   "schema_version": "1"
 }
 ```
@@ -187,16 +187,25 @@ Lists every registered tool. Public (no auth required).
 ```json
 {
   "tools": [
+    {"name": "search_code",         "request_schema": "SearchCodeRequest"},
+    {"name": "read_unit",           "request_schema": "ReadUnitRequest"},
+    {"name": "read_file",           "request_schema": "ReadFileRequest"},
+    {"name": "explore",             "request_schema": "ExploreRequest"},
+    {"name": "find_symbol",         "request_schema": "FindSymbolRequest"},
+    {"name": "list_repos",          "request_schema": "ListReposRequest"},
+    {"name": "repo_overview",       "request_schema": "RepoOverviewRequest"},
     {"name": "get_context",         "request_schema": "GetContextRequest"},
     {"name": "get_module_summary",  "request_schema": "GetModuleSummaryRequest"},
     {"name": "get_related_components", "request_schema": "GetRelatedComponentsRequest"},
     {"name": "get_risks",           "request_schema": "GetRisksRequest"},
-    {"name": "ingest_repository",   "request_schema": "IngestRepositoryRequest"},
     {"name": "query_graph",         "request_schema": "QueryGraphRequest"},
+    {"name": "ingest_repository",   "request_schema": "IngestRepositoryRequest"},
     {"name": "update_memory",       "request_schema": "UpdateMemoryRequest"}
   ]
 }
 ```
+All 14 registered tools (`apps/mcp/registry.py`). See **[08_MCP_TOOLING](08_MCP_TOOLING.md)**
+for what each wraps.
 
 ### `POST /mcp/tools/{name}`
 
@@ -231,6 +240,44 @@ plus an `error_code`.
 mismatches the key.
 
 ---
+
+## Config + onboarding (runtime, no restart)
+
+`apps/api/routers/config.py`. All read state from / write to `app_config`
+(Postgres-over-env). Mutations are bootstrap-open until a key is configured,
+then require it.
+
+| Method · path | Purpose |
+|---|---|
+| `GET /config` | Onboarding/runtime state (masked — never raw keys): `configured`, `embedding_mode`, `embeddings_enabled`, `has_openai_key`, `has_webhook_secret`, `mcp_key_hint`. |
+| `POST /config/mcp-key/generate` · `…/rotate` | Mint / rotate the MCP key (returned once). |
+| `POST /config/openai-key` | Set/clear the OpenAI key. |
+| `POST /config/embedding-mode` | `openai`/`local`; on change, rebuilds + re-embeds collections. |
+| `POST /config/webhook-secret/generate` | Mint the git-webhook signing secret (once). |
+| `POST /config/tokens` · `GET /config/tokens` · `DELETE /config/tokens/{id}` | Mint (once) / list (masked) / revoke named API tokens. |
+| `POST /config/complete-onboarding` | Mark the first-run wizard done. |
+
+## Freshness — auto-reingest (`apps/api/routers/freshness.py`)
+
+| Method · path | Purpose |
+|---|---|
+| `GET /freshness` | All registered repos + freshness state. |
+| `POST /freshness/managed` | Add a managed git-URL repo (clone + ingest + keep fresh). |
+| `POST /freshness/{repo_id}/toggle` | Pause/resume watching. |
+| `POST /freshness/{repo_id}/sync` | Force a freshness check now. |
+| `DELETE /freshness/{repo_id}` | Deregister (delete a managed clone). |
+
+## Webhooks
+
+| Method · path | Purpose |
+|---|---|
+| `POST /webhooks/git` | GitHub/GitLab push events, signature-verified; triggers a managed repo's reingest. |
+
+## Re-embed
+
+| Method · path | Purpose |
+|---|---|
+| `POST /ingest/reembed {repo_id}` | Backfill real vectors for a repo's stored units (auth required). |
 
 ## Snapshot + Replay (Phase 9)
 

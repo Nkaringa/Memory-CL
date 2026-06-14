@@ -101,7 +101,7 @@ Implemented by `apps.api.bootstrap.BootSequence` (run inside
 | 3     | `graph_vector_validation`  | shard routers route + `graph_repo.neighbors` exists            |
 | 4     | `ingestion_readiness`      | Phase-2 `units_repo` exposes upsert/list/delete                |
 | 5     | `retrieval_warmup`         | `RankingModel` + `QueryPlanner` constructible                  |
-| 6     | `mcp_registry`             | default registry exposes the 7 mandated tools                  |
+| 6     | `mcp_registry`             | default registry exposes the 14 tools                  |
 | 7     | `audit_chain`              | empty audit chain `verify_chain()` returns True                |
 | 8     | `api_exposure` (optional)  | `app.state.app_state` populated                                |
 

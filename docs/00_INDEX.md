@@ -45,7 +45,7 @@ Quick links: [Glossary](26_GLOSSARY.md) · [API reference](07_API_REFERENCE.md) 
 - [26 — Glossary](26_GLOSSARY.md) · core terms
 
 ### Engine modules
-- [08 — MCP Tooling](08_MCP_TOOLING.md) · the seven mandated agent tools
+- [08 — MCP Tooling](08_MCP_TOOLING.md) · the 14 agent tools (v2 surface)
 - [MCP Server](MCP_SERVER.md) · native MCP-protocol server (HTTP/SSE)
 - [MCP Bridge](MCP_BRIDGE.md) · stdio bridge for stdio-only MCP clients
 - [09 — Retrieval System](09_RETRIEVAL_SYSTEM.md) · vector + graph + metadata + hybrid

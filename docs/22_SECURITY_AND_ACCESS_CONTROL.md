@@ -15,18 +15,44 @@ that gates the mutation surface: `POST /mcp/tools/{name}`,
 `POST /ingest`, and `POST /ingest/reembed` (reembed spends
 embedding-provider money, so it is never left open).
 
-Behavior:
+Behavior (`apps/mcp/token_auth.credential_accepted`, shared by the REST
+dependency and the native-transport middleware so they can't diverge):
 
-- `Settings.mcp_api_key` unset → dev mode; every request allowed.
-- Key set → request must present `X-API-Key: <key>` OR
-  `Authorization: Bearer <key>`. Wrong / missing → HTTP 401.
+- Nothing configured (no key, no tokens) → dev mode; every request allowed.
+- Otherwise a request must present `X-API-Key: <key>` OR
+  `Authorization: Bearer <key>`, matching **either** the MCP key **or** an
+  active named token. Wrong / missing → HTTP 401.
 
 The `/mcp/tools` listing endpoint is intentionally unauthenticated —
 discovering the surface is cheap and cannot leak data.
 
-```python
-# in production .env
-MCP_API_KEY=<rotate-me-quarterly>
+### Named, revocable API tokens
+
+Beyond the single static key, operators can mint **multiple named tokens**
+(one per agent/machine) and revoke any one individually — no shared-secret
+rotation. Only a **SHA-256 hash** is stored (`api_tokens` table); the raw
+token is shown once at creation and is unrecoverable.
+
+- `POST /config/tokens {name}` — mint (returned once) · `GET /config/tokens`
+  — masked list · `DELETE /config/tokens/{id}` — revoke (instant).
+- CLI: `memcl token create <name> | list | revoke <id>`. UI: Settings → API
+  tokens. Auth checks a cached active-hash set, so it stays O(1).
+
+### Runtime config + no-restart key management
+
+A runtime-config layer (Postgres `app_config`, **Postgres-over-env**) lets
+operators change auth/embedding settings WITHOUT a restart, via the first-run
+wizard (`/setup`) and `/config` endpoints: generate/rotate the MCP key
+(`/config/mcp-key/generate|rotate`), set/clear the OpenAI key
+(`/config/openai-key`), choose embedding mode (`/config/embedding-mode`), and
+generate the git-webhook signing secret (`/config/webhook-secret/generate`).
+The git push webhook (`POST /webhooks/git`) is verified by HMAC (GitHub) /
+token (GitLab) — it never runs without a secret. When `app_config` is empty,
+everything falls back to env (backward compatible — the live key keeps working).
+
+```bash
+# Production: a key carries from env on first boot, then becomes runtime-managed.
+MCP_API_KEY=<seed-or-rotate-in-the-UI>
 ```
 
 ```bash

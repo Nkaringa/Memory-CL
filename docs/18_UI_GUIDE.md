@@ -19,7 +19,7 @@ UI for everything else.
 ```
 ui/
 ├── app/                      ← Next.js App Router
-│   ├── layout.tsx            sidebar + dark theme + providers
+│   ├── layout.tsx            sidebar + light/emerald theme + providers
 │   ├── page.tsx              landing
 │   ├── providers.tsx         React Query
 │   ├── globals.css
@@ -118,7 +118,7 @@ retrieved, why, and how the system decided it" rendered as UI.
 
 ## Design system
 
-- Dark mode default (engineering surface).
+- Light/emerald "command center" theme (the current design system).
 - Monospace for IDs, hashes, qnames.
 - Subtle borders, low-noise palette.
 - Accent color (`#58a6ff`) reserved for active state + key signals.

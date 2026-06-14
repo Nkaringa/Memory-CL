@@ -28,9 +28,13 @@ For the longer mental model: **[docs/01_OVERVIEW](docs/01_OVERVIEW.md)**.
 - **Multi-language ingestion** — Python (`.py`), JavaScript (`.js .mjs .cjs .jsx`), TypeScript (`.ts .tsx .mts .cts`), C# (`.cs`), Go (`.go`), Java (`.java`), and Rust (`.rs`); declaration files (`.d.ts` / `.d.mts` / `.d.cts`) are skipped
 - **Docs ingestion** — Markdown (`.md .mdx .rst`) split into heading sections with relative links becoming graph edges, plus plain text (`.txt`); tooling dirs (`.claude/`, `.github/`, `.planning/`, …) are excluded by default
 - **Hybrid retrieval** — graph, vector, and metadata channels blended by a fixed-weight ranking formula
+- **Pluggable embeddings** — OpenAI (`text-embedding-3-small`, 1536-dim) **or** on-device local (fastembed `bge-small`, 384-dim, no API key); choose the mode at runtime
+- **Lite mode (no Docker)** — `pip install` + `memcl serve` runs the whole engine on embedded SQLite/numpy/Python backends; the full Docker stack (Postgres/Qdrant/Neo4j/Redis) is the server tier
+- **Freshness (auto-reingest)** — a filesystem watcher for mounted repos + git-URL "managed" repos kept fresh by polling, plus a signature-verified git push webhook
 - **Explainable results** — every ranked entry surfaces its score breakdown + pipeline trace
 - **Deterministic outputs** — pinned by snapshot + replay, byte-identical across runs
-- **Agent-native** — 7 MCP tools, exposed both as a REST surface AND a real MCP-protocol server (SSE + streamable HTTP). Stdio bridge ships for clients that don't yet speak remote MCP
+- **Agent-native** — 14 MCP tools, exposed both as a REST surface AND a real MCP-protocol server (SSE + streamable HTTP). Stdio bridge ships for clients that don't yet speak remote MCP
+- **Self-serve onboarding + access control** — a first-run wizard + runtime config (generate/rotate the MCP key, set the embedding/OpenAI keys, no restart) and named, revocable API tokens
 - **Tamper-evident audit** — hash-chained governance ledger with `/audit/verify`
 - **Operationally honest** — `/health/live`, `/health/ready`, `/health/dependencies`, `/status` give an unflinching live view
 - **Safe-mode states** — discrete failure modes (`read_only` / `mcp_disabled` / `retrieval_only`) for graceful degradation

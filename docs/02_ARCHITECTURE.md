@@ -64,7 +64,7 @@ core/embeddings/     ──► chunk + embed + write payloads
 core/retrieval/      ──► graph + vector + metadata channels + hybrid
 core/ranking/        ──► mandated formula + tie-break
 core/context/        ──► priority-ordered assembler + budget optimizer
-core/mcp/            ──► tool executor + 7 tools + validator
+core/mcp/            ──► tool executor + 14 tools + validator
 core/lifecycle/      ──► decay + compaction + refresh planners
 core/analytics/      ──► usage + feedback + performance signals
 core/scaling/        ──► shard routers + retrieval cache + distributor

@@ -7,19 +7,30 @@ The MCP layer (Phase 5) is the **agent surface**. It exposes Phases
 orchestration wrappers — they never bypass retrieval / graph /
 ingestion semantics.
 
-## The seven mandated tools
+## The tool registry (14 tools)
+
+The v2 surface is **agent-first**: discovery/read/explore tools front the
+hybrid engine, with the original Phase-4 tools kept (some as compat aliases).
 
 | Tool | Wraps | Purpose |
 |---|---|---|
-| `get_context` | full Phase-4 retrieval path | Returns a `ContextPacket` for a task |
-| `get_module_summary` | Postgres read + `ModuleSummarizer` | Per-module `DenseModule` |
+| `search_code` | hybrid retrieval | Natural-language code search (the primary entry point) |
+| `read_unit` | Postgres/SQLite read | Read one unit by qualified name (with parent chain) |
+| `read_file` | Postgres/SQLite read | Read a file's units (fuzzy path match) |
+| `explore` | `GraphRetriever` (BFS) | Walk a symbol's neighbors with relation labels |
+| `find_symbol` | qname search | Locate symbols by name fragment |
+| `list_repos` | `units_repo.list_repos` | Ingested repos + unit/file/language counts |
+| `repo_overview` | aggregates | Repo shape: top modules, languages, most-connected |
+| `get_context` | full Phase-4 retrieval | Returns a `ContextPacket` for a task |
+| `get_module_summary` | read + `ModuleSummarizer` | Per-module `DenseModule` |
 | `get_related_components` | `GraphRetriever` (BFS) | 1+-hop neighbors of a unit/qname |
-| `get_risks` | `graph_repo.neighbors` filtered to `EXTERNAL` | Foreign-dependency risk projection |
+| `get_risks` | `neighbors` filtered to `EXTERNAL` | Foreign-dependency risk projection |
 | `query_graph` | `GraphRetriever` (depth-bounded) | BFS exposing seed + neighbors |
 | `ingest_repository` | `IngestionPipeline` | Trigger ingest from agent context |
-| `update_memory` | Redis `RPUSH + EXPIRE` | Append-only session memory |
+| `update_memory` | Redis/in-memory `RPUSH + EXPIRE` | Append-only session memory |
 
-Source: `core/mcp/tools/`.
+Source: `core/mcp/tools/` · registry: `apps/mcp/registry.py::build_default_registry()`
+(14 tools — the live count is asserted by `tests/test_mcp_tools.py::EXPECTED_TOOLS`).
 
 ## Registry model
 
@@ -29,7 +40,7 @@ Source: `core/mcp/tools/`.
 - name uniqueness enforced
 - `Tool` is a `@runtime_checkable` Protocol — duck-typed tools work
 
-`apps/mcp/registry.py::build_default_registry()` wires the seven
+`apps/mcp/registry.py::build_default_registry()` wires the 14
 defaults at boot. Tests can construct ad-hoc registries with fakes.
 
 ## Execution lifecycle
