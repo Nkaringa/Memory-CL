@@ -41,6 +41,8 @@ services:
       OTEL_SERVICE_NAME: memory-cl-api
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      # Phase-3 freshness. Optional token for cloning PRIVATE managed repos.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     ports:
       - "8000:8000"
     volumes:
@@ -58,6 +60,9 @@ services:
       # container recreate doesn't re-download it. See Dockerfile env
       # FASTEMBED_CACHE_PATH / HF_HOME.
       - memcl-model-cache:/home/memcl/.cache
+      # Writable workspace for managed (git-cloned) repos — Phase 3
+      # freshness clones + pulls here despite the read-only root.
+      - memcl-managed-repos:/managed
     depends_on:
       postgres: { condition: service_healthy }
       qdrant:   { condition: service_started }
@@ -236,3 +241,5 @@ volumes:
   redis-prod-data:
   # On-device embedding model cache (local mode). Survives api recreates.
   memcl-model-cache:
+  # Managed (git-cloned) repos workspace — Phase 3 freshness.
+  memcl-managed-repos:
