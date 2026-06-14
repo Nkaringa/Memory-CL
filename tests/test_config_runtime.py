@@ -121,6 +121,24 @@ async def test_embeddings_disabled_when_no_key() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_webhook_secret_postgres_over_env() -> None:
+    repo = _FakeAppConfigRepo(_row(webhook_secret="pg-secret"))
+    rc = RuntimeConfig(repo, _settings(webhook_secret="env-secret"))  # type: ignore[arg-type]
+    await rc.refresh()
+    assert rc.webhook_secret() == "pg-secret"
+
+
+@pytest.mark.asyncio
+async def test_webhook_secret_env_fallback_then_none() -> None:
+    rc = RuntimeConfig(_FakeAppConfigRepo(_row()), _settings(webhook_secret="env-secret"))  # type: ignore[arg-type]
+    await rc.refresh()
+    assert rc.webhook_secret() == "env-secret"
+    rc2 = RuntimeConfig(_FakeAppConfigRepo(None), _settings())  # type: ignore[arg-type]
+    await rc2.refresh()
+    assert rc2.webhook_secret() is None
+
+
 async def test_local_mode_enables_embeddings_without_openai_key() -> None:
     """Phase-2: the on-device embedder needs no API key, so selecting
     'local' enables embeddings even with no OpenAI key configured."""

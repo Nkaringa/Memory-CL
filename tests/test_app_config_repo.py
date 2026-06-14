@@ -22,11 +22,15 @@ def test_ddl_defines_app_config_columns() -> None:
     ddl = " ".join(_DDL_STATEMENTS[0].split())
     for col in (
         "mcp_api_key", "openai_api_key", "embedding_mode",
-        "embedding_model", "onboarding_completed", "updated_at",
+        "embedding_model", "onboarding_completed", "webhook_secret", "updated_at",
     ):
         assert col in ddl, f"missing column {col}"
     # Single logical row pinned by INTEGER PRIMARY KEY.
     assert "id INTEGER PRIMARY KEY" in ddl
+    # An ALTER carries the new column onto an already-deployed table.
+    assert any(
+        "ADD COLUMN IF NOT EXISTS webhook_secret" in s for s in _DDL_STATEMENTS
+    )
 
 
 def test_upsert_casts_non_text_binds_in_cte() -> None:

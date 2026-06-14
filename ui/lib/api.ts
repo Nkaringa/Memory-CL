@@ -16,6 +16,7 @@ import type {
   FreshnessList,
   McpKeyResponse,
   SyncResult,
+  WebhookSecretResult,
   IngestRequest,
   IngestResponse,
   McpToolList,
@@ -205,6 +206,11 @@ export class AsyncMemoryClient {
 
   completeOnboarding(): Promise<unknown> {
     return this.post<unknown>("/config/complete-onboarding", {});
+  }
+
+  /** Generate (or replace) the git-webhook signing secret. Returned once. */
+  generateWebhookSecret(): Promise<WebhookSecretResult> {
+    return this.post<WebhookSecretResult>("/config/webhook-secret/generate", {});
   }
 
   // ------ freshness (Phase 3) ---------------------------------------------

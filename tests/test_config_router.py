@@ -57,6 +57,7 @@ class _FakeAppConfigRepo:
             "embedding_mode": base.embedding_mode if base else "openai",
             "embedding_model": base.embedding_model if base else None,
             "onboarding_completed": base.onboarding_completed if base else False,
+            "webhook_secret": base.webhook_secret if base else None,
         }
         merged.update({k: v for k, v in fields.items() if k in merged})
         self._row = AppConfigRow(id=1, updated_at=datetime.now(UTC), **merged)  # type: ignore[arg-type]
@@ -70,6 +71,9 @@ class _FakeAppConfigRepo:
 
     async def set_embedding_mode(self, mode: str) -> AppConfigRow:
         return await self.upsert(embedding_mode=mode)
+
+    async def set_webhook_secret(self, secret: str | None) -> AppConfigRow:
+        return await self.upsert(webhook_secret=secret)
 
     async def set_onboarding_completed(self, done: bool) -> AppConfigRow:
         return await self.upsert(onboarding_completed=done)
@@ -290,6 +294,18 @@ def test_set_embedding_mode_noop_when_unchanged_skips_reindex(
     assert body["reindexed"] is False
     assert body["repos_reindexed"] == 0
     assert calls == []  # reindex never invoked
+
+
+def test_generate_webhook_secret_returns_once_and_sets_flag() -> None:
+    repo = _FakeAppConfigRepo(None)
+    app = _make_app(repo)
+    with TestClient(app) as client:
+        assert client.get("/config").json()["has_webhook_secret"] is False
+        resp = client.post("/config/webhook-secret/generate")
+        assert resp.status_code == 200
+        secret = resp.json()["secret"]
+        assert len(secret) > 20
+        assert client.get("/config").json()["has_webhook_secret"] is True
 
 
 def test_complete_onboarding_sets_flag() -> None:

@@ -122,6 +122,10 @@ class Settings(BaseSettings):
     # Optional token for cloning/pulling PRIVATE managed repos (injected
     # into the https clone URL; the clean URL is what's persisted).
     github_token: SecretStr | None = Field(default=None)
+    # Shared secret for verifying inbound git-push webhook signatures
+    # (GitHub HMAC / GitLab token). Usually set at runtime via the UI
+    # (app_config) — this env value is the fallback. None => webhook off.
+    webhook_secret: SecretStr | None = Field(default=None)
 
     # ----- Distributed scale (Phase 7) -----
     # Worker pool concurrency for distributed ingestion / retrieval.

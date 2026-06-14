@@ -131,6 +131,19 @@ class RuntimeConfig:
             return True
         return self.openai_api_key() is not None
 
+    def webhook_secret(self) -> str | None:
+        """app_config.webhook_secret if set, else env WEBHOOK_SECRET, else None.
+
+        Used to verify inbound git-push webhook signatures. When None, the
+        webhook endpoint rejects every request (it never runs open)."""
+        row = self._snapshot()
+        if row is not None and row.webhook_secret and row.webhook_secret.strip():
+            return row.webhook_secret
+        env = self._settings.webhook_secret
+        if env is not None and env.get_secret_value().strip():
+            return env.get_secret_value()
+        return None
+
     def onboarding_completed(self) -> bool:
         row = self._snapshot()
         return bool(row and row.onboarding_completed)
