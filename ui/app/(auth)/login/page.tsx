@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { fetchMe, login, register } from "@/lib/auth";
+import { fetchMe, fetchProviders, login, register } from "@/lib/auth";
+import type { ProviderPublic } from "@/lib/types";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -14,16 +15,19 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [checking, setChecking] = useState(true);
+  const [providers, setProviders] = useState<ProviderPublic[]>([]);
 
   // If already authenticated, bounce to the home page immediately.
+  // Also load enabled OAuth providers for the social login buttons.
   useEffect(() => {
     let cancelled = false;
-    fetchMe().then((me) => {
+    Promise.all([fetchMe(), fetchProviders()]).then(([me, provs]) => {
       if (cancelled) return;
       if (me.authenticated) {
         router.replace("/");
       } else {
         setChecking(false);
+        setProviders(provs);
       }
     });
     return () => {
@@ -77,6 +81,29 @@ export default function LoginPage() {
               {mode === "login" ? "Sign in to your account" : "Create an account"}
             </div>
           </div>
+
+          {/* OAuth provider buttons */}
+          {providers.length > 0 && (
+            <div className="px-6 pt-5 pb-1 space-y-2">
+              {providers.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    window.location.href = `/api/auth/oauth/${p.id}/start`;
+                  }}
+                  className="w-full rounded-lg border border-border bg-bg px-4 py-2.5 text-[13.5px] font-medium text-fg transition-colors hover:border-accent hover:text-accentInk"
+                >
+                  Continue with {p.display_name}
+                </button>
+              ))}
+              <div className="flex items-center gap-3 pt-2 pb-1">
+                <hr className="flex-1 border-border" />
+                <span className="text-[11.5px] text-muted">or</span>
+                <hr className="flex-1 border-border" />
+              </div>
+            </div>
+          )}
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="px-6 py-5 space-y-3">

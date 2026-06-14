@@ -407,6 +407,27 @@ export interface ApiErrorBody {
   [key: string]: unknown;
 }
 
+// ---- OAuth / Identity providers ------------------------------------------
+
+/** Public shape — returned by GET /auth/providers (login page). */
+export interface ProviderPublic {
+  id: string;
+  provider_type: string;
+  display_name: string;
+}
+
+/** Admin shape — returned by GET /config/auth/providers (Settings). */
+export interface ProviderAdmin {
+  id: string;
+  provider_type: string;
+  display_name: string;
+  client_id: string;
+  has_secret: boolean;
+  discovery_url: string | null;
+  scopes: string | null;
+  enabled: boolean;
+}
+
 // ---- Auth -----------------------------------------------------------------
 export interface UserView {
   user_id: string;
