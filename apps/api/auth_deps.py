@@ -42,7 +42,8 @@ def set_session_cookie(response: Response, raw: str, ttl_seconds: int) -> None:
 
 
 def clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(COOKIE_NAME, path="/")
+    secure = get_settings().environment == "production"
+    response.delete_cookie(COOKIE_NAME, path="/", httponly=True, samesite="lax", secure=secure)
 
 
 async def get_principal(

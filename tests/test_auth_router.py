@@ -122,3 +122,29 @@ async def test_second_anonymous_register_refused(client: AsyncClient) -> None:
     # While anonymous, try to register a second user — must be rejected
     r = await client.post("/auth/register", json=_SECOND)
     assert r.status_code in (401, 403)
+
+
+@pytest.mark.anyio
+async def test_owner_creates_second_user_keeps_own_session(client: AsyncClient) -> None:
+    # bootstrap: first user becomes owner, auto-logged-in
+    r = await client.post("/auth/register", json={"email": "owner@x.c", "password": "password123", "display_name": "Owner"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["authenticated"] is True
+    assert body["user"]["roles"] == ["owner"]
+
+    # owner (still logged in via cookie) creates a second user
+    r2 = await client.post("/auth/register", json={"email": "second@x.c", "password": "password123", "display_name": "Second"})
+    assert r2.status_code == 200, r2.text
+    body2 = r2.json()
+    # The new user is NOT auto-logged-in (not bootstrap); authenticated is False
+    assert body2["authenticated"] is False
+    assert body2["user"]["email"] == "second@x.c"
+    assert body2["user"]["roles"] == ["member"]
+
+    # the owner's OWN session is intact: /auth/me still shows the owner
+    me = await client.get("/auth/me")
+    me_body = me.json()
+    assert me_body["authenticated"] is True
+    assert me_body["user"]["email"] == "owner@x.c"
+    assert me_body["user"]["roles"] == ["owner"]

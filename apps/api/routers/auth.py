@@ -29,10 +29,14 @@ from apps.api.dependencies import (
     SessionRepoDep,
     UserRepoDep,
 )
-from core.auth import ROLE_ADMIN, ROLE_OWNER, hash_password, verify_password
+from core.auth import ROLE_ADMIN, ROLE_MEMBER, ROLE_OWNER, hash_password, verify_password
 from core.config import get_settings
 from schemas.auth import LoginRequest, MeResponse, RegisterRequest, UserView
 from storage.org_repo import DEFAULT_ORG_ID
+
+# Compute once at import time so the login path can equalise timing when the
+# email is not found (prevents user-enumeration via response-time oracle).
+_DUMMY_PW_HASH = hash_password("memcl-timing-equalizer")
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -117,7 +121,7 @@ async def register(
         password_hash=hash_password(body.password),
     )
 
-    role = ROLE_OWNER if is_bootstrap else "member"
+    role = ROLE_OWNER if is_bootstrap else ROLE_MEMBER
     membership_id = secrets.token_urlsafe(12)
     await membership_repo.add_member(
         membership_id=membership_id,
@@ -142,6 +146,9 @@ async def register(
         org_id=DEFAULT_ORG_ID,
         roles=[role],
     )
+    # authenticated reflects whether THIS call established a session for the
+    # newly created user (true only on first-user bootstrap); an admin
+    # creating another user keeps their own session and is not re-logged-in.
     return MeResponse(authenticated=is_bootstrap, user=user_view)
 
 
@@ -156,12 +163,22 @@ async def login(
 ) -> MeResponse:
     user = await user_repo.get_by_email(body.email)
     if user is None:
+        # Always run a dummy verify of equivalent cost so an attacker cannot
+        # distinguish "no such email" from "wrong password" via timing.
+        verify_password(body.password, _DUMMY_PW_HASH)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
     h = await user_repo.get_password_hash(user.user_id)
-    if not h or not verify_password(body.password, h):
+    if not h:
+        # No credential row stored — equalise timing before 401.
+        verify_password(body.password, _DUMMY_PW_HASH)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+    if not verify_password(body.password, h):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
