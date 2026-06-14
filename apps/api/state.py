@@ -12,7 +12,7 @@ from storage import (
     QdrantVectorRepository,
     RedisClient,
 )
-from storage.repositories import MembershipRepository, OrgRepository, SessionRepository, UserRepository
+from storage.repositories import AuthProviderRepository, FederatedIdentityRepository, MembershipRepository, OrgRepository, SessionRepository, UserRepository
 
 
 @dataclass
@@ -43,6 +43,9 @@ class AppState:
     user_repo: UserRepository | None = field(default=None)
     membership_repo: MembershipRepository | None = field(default=None)
     session_repo: SessionRepository | None = field(default=None)
+    # Federation repos (Task 5). Optional so existing test fixtures compile.
+    auth_provider_repo: AuthProviderRepository | None = field(default=None)
+    federated_identity_repo: FederatedIdentityRepository | None = field(default=None)
 
     @classmethod
     def with_default_embedder(
@@ -61,6 +64,8 @@ class AppState:
         user_repo: UserRepository | None = None,
         membership_repo: MembershipRepository | None = None,
         session_repo: SessionRepository | None = None,
+        auth_provider_repo: AuthProviderRepository | None = None,
+        federated_identity_repo: FederatedIdentityRepository | None = None,
     ) -> AppState:
         """Build an AppState, defaulting the embedder when none is given.
 
@@ -85,4 +90,6 @@ class AppState:
             user_repo=user_repo,
             membership_repo=membership_repo,
             session_repo=session_repo,
+            auth_provider_repo=auth_provider_repo,
+            federated_identity_repo=federated_identity_repo,
         )
