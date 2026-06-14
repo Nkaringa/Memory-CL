@@ -18,6 +18,7 @@ from apps.api.routers import (
     retrieve,
     snapshot,
     status,
+    webhooks,
 )
 from apps.mcp import mcp_router
 from core import get_settings
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
     app.include_router(status.router)
     app.include_router(repos.router)
     app.include_router(freshness.router)
+    app.include_router(webhooks.router)
     # Onboarding Phase 1: runtime config + key management.
     app.include_router(config.router)
 
