@@ -79,6 +79,11 @@ argon2-cffi==25.1.0
 argon2-cffi-bindings==25.1.0
 itsdangerous==2.2.0
 
+# --- Auth (federation — OIDC/OAuth2 provider presets + client) ---------------
+authlib==1.7.2
+cryptography==48.0.0
+joserfc==1.7.1
+
 # --- Email validation (required by pydantic EmailStr in auth schemas) -------
 email-validator==2.3.0
 dnspython==2.8.0
