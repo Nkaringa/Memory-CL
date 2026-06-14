@@ -6,6 +6,7 @@ from fastapi import Depends, Request
 
 from apps.api.state import AppState
 from core.config_runtime import RuntimeConfig
+from core.token_cache import TokenCache
 from storage import (
     Neo4jClient,
     PostgresClient,
@@ -60,6 +61,15 @@ def get_redis(state: AppStateDep) -> RedisClient:
     return state.redis
 
 
+def get_token_cache(request: Request) -> TokenCache:
+    """The named-API-token cache attached during lifespan."""
+    cache = getattr(request.app.state, "token_cache", None)
+    if cache is None:
+        raise RuntimeError("TokenCache not initialized — lifespan did not run")
+    assert isinstance(cache, TokenCache)
+    return cache
+
+
 def get_repo_registry(request: Request) -> RepoRegistryRepository:
     """The Phase-3 freshness repo registry attached during lifespan."""
     registry = getattr(request.app.state, "repo_registry", None)
@@ -74,3 +84,4 @@ QdrantDep = Annotated[QdrantStorageClient, Depends(get_qdrant)]
 Neo4jDep = Annotated[Neo4jClient, Depends(get_neo4j)]
 RedisDep = Annotated[RedisClient, Depends(get_redis)]
 RepoRegistryDep = Annotated[RepoRegistryRepository, Depends(get_repo_registry)]
+TokenCacheDep = Annotated[TokenCache, Depends(get_token_cache)]

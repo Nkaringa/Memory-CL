@@ -17,11 +17,42 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from apps.api.dependencies import get_app_state
+from apps.api.dependencies import get_app_state, get_token_cache
 from apps.api.routers import config as config_router
 from core.config import Settings, get_settings
 from core.config_runtime import RuntimeConfig
+from storage.api_token_repo import ApiTokenRow
 from storage.app_config_repo import AppConfigRow
+
+
+class _FakeTokenRepo:
+    def __init__(self) -> None:
+        self.rows: list[ApiTokenRow] = []
+        self._n = 0
+
+    async def issue(self, name: str) -> tuple[str, ApiTokenRow]:
+        self._n += 1
+        row = ApiTokenRow(
+            id=f"t{self._n}", name=name, token_hint="••••abcd",
+            created_at=datetime.now(UTC), last_used_at=None, revoked_at=None,
+        )
+        self.rows.append(row)
+        return "raw-token-value", row
+
+    async def list_all(self) -> list[ApiTokenRow]:
+        return self.rows
+
+    async def revoke(self, token_id: str) -> bool:
+        return any(r.id == token_id for r in self.rows)
+
+
+class _FakeTokenCache:
+    def __init__(self) -> None:
+        self.repo = _FakeTokenRepo()
+        self.refreshed = 0
+
+    async def refresh(self) -> None:
+        self.refreshed += 1
 
 
 class _FakeUnitsRepo:
@@ -99,6 +130,8 @@ def _make_app(repo: _FakeAppConfigRepo, state: _FakeState | None = None) -> Fast
     # The mode-change endpoint depends on AppState (to enumerate repos for
     # reindex). Override the strict accessor with a duck-typed fake.
     app.dependency_overrides[get_app_state] = lambda: state or _FakeState()
+    tc = _FakeTokenCache()
+    app.dependency_overrides[get_token_cache] = lambda: tc
     return app
 
 
@@ -306,6 +339,40 @@ def test_generate_webhook_secret_returns_once_and_sets_flag() -> None:
         secret = resp.json()["secret"]
         assert len(secret) > 20
         assert client.get("/config").json()["has_webhook_secret"] is True
+
+
+def test_issue_token_returns_raw_once_and_names_it() -> None:
+    app = _make_app(_FakeAppConfigRepo(None))
+    with TestClient(app) as client:
+        r = client.post("/config/tokens", json={"name": "laptop"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["token"] == "raw-token-value"
+        assert body["name"] == "laptop"
+        assert body["token_hint"] == "••••abcd"
+
+
+def test_list_tokens_masks_and_excludes_raw() -> None:
+    app = _make_app(_FakeAppConfigRepo(None))
+    with TestClient(app) as client:
+        client.post("/config/tokens", json={"name": "ci"})
+        toks = client.get("/config/tokens").json()["tokens"]
+    assert len(toks) == 1
+    assert toks[0]["name"] == "ci"
+    assert "token" not in toks[0]  # never the raw value
+
+
+def test_revoke_token_unknown_is_404() -> None:
+    app = _make_app(_FakeAppConfigRepo(None))
+    with TestClient(app) as client:
+        assert client.delete("/config/tokens/nope").status_code == 404
+
+
+def test_revoke_token_known() -> None:
+    app = _make_app(_FakeAppConfigRepo(None))
+    with TestClient(app) as client:
+        client.post("/config/tokens", json={"name": "a"})  # -> id t1
+        assert client.delete("/config/tokens/t1").status_code == 200
 
 
 def test_complete_onboarding_sets_flag() -> None:

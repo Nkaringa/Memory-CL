@@ -347,6 +347,19 @@ class AsyncMemoryClient:
         """DELETE /freshness/{repo_id} — deregister (delete a managed clone)."""
         return await self._delete_json(f"/freshness/{repo_id}")
 
+    # ----- named API tokens -----
+    async def issue_token(self, *, name: str) -> dict[str, Any]:
+        """POST /config/tokens — mint a named token (raw returned once)."""
+        return await self._post_json("/config/tokens", {"name": name})
+
+    async def list_tokens(self) -> dict[str, Any]:
+        """GET /config/tokens — named tokens (masked)."""
+        return await self._get_json("/config/tokens")
+
+    async def revoke_token(self, *, token_id: str) -> dict[str, Any]:
+        """DELETE /config/tokens/{id} — revoke a named token immediately."""
+        return await self._delete_json(f"/config/tokens/{token_id}")
+
     # ----- internal HTTP plumbing -----
     def _request_id_headers(self) -> dict[str, str]:
         """Compute X-Request-ID for the current call.
