@@ -13,7 +13,7 @@ reading the full repository.
 The engine is wrapped by:
 
 - a thin HTTP API (FastAPI),
-- seven MCP tools (the agent surface),
+- fourteen MCP tools (the agent surface),
 - a Python SDK + `memcl` CLI (the developer surface),
 - a Next.js transparency UI (the cognitive surface).
 
@@ -95,7 +95,7 @@ UI  /retrieve   ────►  same as above + per-entry "Why this result?"
 │  ├── retrieval    graph + vector + metadata + hybrid + planner │
 │  ├── ranking      mandated formula + scoring + tie-break       │
 │  ├── context      assembler + budget optimizer                 │
-│  ├── mcp          executor + registry + 7 tools                │
+│  ├── mcp          executor + registry + 14 tools                │
 │  ├── lifecycle    decay + compaction + refresh + scoring       │
 │  ├── analytics    usage + feedback + performance               │
 │  ├── scaling      shard routers + retrieval cache              │

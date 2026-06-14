@@ -4,12 +4,12 @@
 
 Memory-CL is **one engine with three deployment postures**. The same
 deterministic core — multi-language ingestion, a typed knowledge graph,
-hybrid retrieval with an auditable ranking formula, and seven MCP tools —
+hybrid retrieval with an auditable ranking formula, and 14 MCP tools —
 serves a solo developer pointing Claude at a side project, a small team
 sharing a memory server on a LAN VM, and a company that needs hardened
 containers, health gates, and a tamper-evident audit trail. Nothing below
 is aspirational marketing: **every feature in this document was verified
-against the code on 2026-06-12** (file paths inline), and each carries an
+against the code on 2026-06-14** (file paths inline), and each carries an
 honest maturity label. Where the engine ships scaffolding instead of a
 finished feature, the ledger says so.
 
@@ -38,13 +38,13 @@ Maturity vocabulary used throughout:
 | Knowledge graph (Neo4j, typed edges, EDGE_RULES) | ✓ | ✓ | ✓ | stable |
 | Whole-repo graph endpoint + viewer | ○ | ✓ | ○ | functional |
 | Repo discovery + qname autocomplete | ○ | ✓ | ✓ | stable |
-| Semantic embeddings (OpenAI, optional) | ○ | ✓ | ✓ | functional |
+| Embeddings — OpenAI **or** on-device local (fastembed) | ○ | ✓ | ✓ | functional |
 | Re-embed backfill (`/ingest/reembed`) | ○ | ✓ | ✓ | functional |
 | Hybrid retrieval (vector + graph + keyword) | ✓ | ✓ | ✓ | stable |
 | Fixed-weight ranking + per-result breakdown | ✓ | ✓ | ✓ | stable |
 | Explainability (served weights, channel counts) | ○ | ✓ | ✓ | stable |
 | Module summaries / dense compression | ○ | ○ | ○ | functional |
-| 7 MCP tools | ✓ | ✓ | ✓ | stable |
+| 14 MCP tools | ✓ | ✓ | ✓ | stable |
 | Native MCP server (SSE + streamable HTTP) | ✓ | ✓ | ✓ | functional |
 | MCP stdio bridge | ✓ | ○ | — | functional |
 | REST API | ○ | ✓ | ✓ | stable |
@@ -66,7 +66,7 @@ Maturity vocabulary used throughout:
 | Lifecycle (decay / refresh / compaction) | — | — | ○ | scaffolding |
 | Distributed scale (sharding, workers) | — | — | ○ | scaffolding |
 | Governance (tenants, policies, access control) | — | — | ✓ | scaffolding |
-| Lite mode (single-container quickstart) | ✓ | ○ | — | planned |
+| Lite mode (no-Docker, `pip install` + `memcl serve`) | ✓ | ○ | — | functional |
 
 ---
 
@@ -77,8 +77,10 @@ stop re-reading the whole repo every session. One machine, one or two
 repos, probably no API key discipline, definitely no ops team.
 
 **Recommended setup.**
-*Lite mode (single container, minimal deps) is **PLANNED** — it does not
-exist yet.* Today's path is the dev compose stack:
+**Lite mode** (shipped): `pip install memory-cl && memcl serve` runs the
+whole engine on localhost with embedded SQLite/numpy/Python backends — no
+Docker, no databases, on-device embeddings (no API key). Data lives in
+`~/.memcl`. For multi-repo / heavier use, the server stack:
 `docker compose up -d` (Postgres + Qdrant + Neo4j + Redis + API + UI),
 then `memcl ingest /path/to/repo --repo-id my-repo`. With `MCP_API_KEY`
 unset, auth is a no-op (`apps/mcp/auth.py`) — fine on localhost only.
@@ -109,11 +111,11 @@ unset, auth is a no-op (`apps/mcp/auth.py`) — fine on localhost only.
   channels run in parallel; one channel failing never kills the query
   (`hybrid_retriever.py`). *Why:* works even before you configure
   embeddings — keyword + graph carry the load. — **stable**
-- **Optional semantic embeddings** — set `OPENAI_API_KEY` and ingestion
-  embeds incrementally by `source_sha`
-  (`core/embeddings/openai_embedder.py`, raw HTTP, no SDK dependency);
-  without it, retrieval still works on the other channels. — **functional**
-  (OpenAI only; a "voyage" embedder name is declared but unimplemented)
+- **Pluggable embeddings** — OpenAI (`text-embedding-3-small`, 1536-dim,
+  `core/embeddings/openai_embedder.py`) **or** on-device local (fastembed
+  `bge-small`, 384-dim, no API key, `core/embeddings/local_embedder.py`),
+  chosen by `embedding_mode` at runtime. Without either, the other channels
+  still carry retrieval. — **functional**
 
 ### Graph
 - **Typed knowledge graph** — Neo4j nodes/edges validated fail-fast
@@ -122,20 +124,24 @@ unset, auth is a no-op (`apps/mcp/auth.py`) — fine on localhost only.
   structurally, not by grep. — **stable**
 
 ### Integration
-- **7 MCP tools** — `get_context`, `get_module_summary`,
-  `get_related_components`, `get_risks`, `ingest_repository`,
-  `query_graph`, `update_memory` (`apps/mcp/registry.py`). *Why:* this is
-  the whole point — Claude/Cursor/Zed call these directly. — **stable**
+- **14 MCP tools** — agent-first: `search_code`, `read_unit`, `read_file`,
+  `explore`, `find_symbol`, `list_repos`, `repo_overview`, plus
+  `get_context`, `get_module_summary`, `get_related_components`, `get_risks`,
+  `query_graph`, `ingest_repository`, `update_memory`
+  (`apps/mcp/registry.py`). *Why:* this is the whole point — Claude/Cursor/Zed
+  call these directly. — **stable**
 - **Native MCP server + stdio bridge** — SSE at `/mcp/sse`, streamable
   HTTP at `/mcp/http` (`apps/mcp/native_transport.py`);
   `scripts/mcp_bridge.py` for stdio-only clients. — **functional**
-- **`memcl` CLI** — `ingest`, `reembed`, `query`, `graph`, `snapshot`,
-  `replay`, `status`; canonical sorted-key JSON output for stable diffs
-  (`apps/cli/main.py`). — **stable**
+- **`memcl` CLI** — `search`, `read`, `explore`, `ingest`, `repos`,
+  `freshness`, `token`, `serve`, `setup`, `snapshot`, `status`, … (v1
+  `query`/`graph` kept as aliases); canonical sorted-key JSON output for
+  stable diffs (`apps/cli/main.py`). — **stable**
 
 ### Operations
-- **Web UI** — dashboard, retrieve (with explain panel), graph, ingest,
-  status pages get you started without reading API docs. — **functional**
+- **Web UI** (light/emerald command center) — Command Center, Ask
+  (search), Graph, Read, Repositories, Activity, Metrics, Health, Settings
+  (keys/tokens/embeddings/webhook), Setup wizard. — **functional**
 - **Golden test suite** — `pytest tests/` passes with no Docker daemon;
   golden integration tests skip cleanly when stores are absent. — **stable**
 
@@ -305,7 +311,7 @@ Everything in Tiers 1–2, plus:
 | 12 | Fixed-weight ranking + breakdown | stable | `core/ranking/feature_weights.py`, `schemas/retrieval.py:79` |
 | 13 | Explainability (served weights, channel counts) | stable | `/status.feature_weights`, `RetrieveResponse` |
 | 14 | Dense compression + module summaries | functional | `core/compression/`, `core/mcp/tools/context_tool.py:22` |
-| 15 | 7 MCP tools | stable | `apps/mcp/registry.py:23-29` |
+| 15 | 14 MCP tools | stable | `apps/mcp/registry.py:23-29` |
 | 16 | Native MCP server (SSE + streamable HTTP) | functional | `apps/mcp/native_transport.py` |
 | 17 | MCP REST surface (`/mcp/tools`) | stable | `apps/mcp/router.py` |
 | 18 | MCP stdio bridge | functional | `scripts/mcp_bridge.py`, `tests/test_mcp_bridge.py` |
@@ -333,10 +339,10 @@ Everything in Tiers 1–2, plus:
 | 40 | Per-tenant / per-agent identity | planned | `SECURITY.md` Gap — gateway required today |
 | 41 | Persistent audit sink wiring | planned | `JsonlFileAuditSink` exists, unwired |
 | 42 | Voyage embedder | planned | `core/embeddings/embedder.py:9` — name only |
-| 43 | Lite mode (single-container quickstart) | planned | no implementation |
+| 43 | Lite mode (no-Docker, `pip install` + `memcl serve`) | functional | `core/config.py` MODE/lite_data_dir, `storage/lite/`, `apps/cli/main.py` serve, tests `test_lite_*.py` |
 | 44 | Worker queue execution (Phase 11 batch ingest) | planned | `docs/14` "provisioned for Phase-11" |
 
-**Tally: 44 features — 20 stable · 13 functional · 6 scaffolding · 5 planned.**
+**Tally: 44 features — 20 stable · 14 functional · 6 scaffolding · 4 planned.** (Lite mode shipped; see also embeddings, freshness, named API tokens below.)
 
 ---
 

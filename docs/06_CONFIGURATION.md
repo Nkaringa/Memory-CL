@@ -31,14 +31,53 @@ Grouped by phase / concern.
 | `NEO4J_PASSWORD` | `memory-cl-dev` | **MUST** override in prod |
 | `REDIS_URL` | `redis://redis:6379/0` | DB 0 holds lifecycle + audit + quarantine flags |
 
-### LLM / embedding (Phase 1+, future)
+### Embeddings
+
+Embeddings are **live** (not a placeholder). Two providers, chosen by
+`embedding_mode` — settable at runtime via `POST /config/embedding-mode`
+(server default `openai`, lite default `local`):
 
 | Var | Default | Notes |
 |---|---|---|
-| `OPENAI_API_KEY` | empty | Reserved; Phase-3 ships a deterministic embedder |
-| `ANTHROPIC_API_KEY` | empty | Reserved |
-| `EMBEDDING_MODEL` | `text-embedding-3-large` | Currently informational |
-| `PRIMARY_LLM` | `claude-sonnet-4` | Currently informational |
+| `OPENAI_API_KEY` | empty | Required only when `embedding_mode = openai`. Usually set at runtime via `POST /config/openai-key` (stored in `app_config`, Postgres-over-env). |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI model (1536-dim). Local mode uses fastembed `BAAI/bge-small-en-v1.5` (384-dim, no key). |
+| `ANTHROPIC_API_KEY` | empty | Reserved (future LLM selection). |
+| `PRIMARY_LLM` | `claude-sonnet-4` | Currently informational. |
+
+The query-side and document-side embedder MUST share model + dimension or
+retrieval is noise; switching modes rebuilds collections + re-embeds. See
+**[12_EMBEDDINGS_AND_COMPRESSION](12_EMBEDDINGS_AND_COMPRESSION.md)**.
+
+### Deployment mode (lite vs server)
+
+| Var | Default | Notes |
+|---|---|---|
+| `MODE` | `server` | `server` = the Docker stack (Postgres/Qdrant/Neo4j/Redis). `lite` = embedded SQLite/numpy/Python backends, no Docker (`pip install` + `memcl serve`). |
+| `LITE_DATA_DIR` | `~/.memcl` | Where lite keeps `data.db` + the model cache (`~` expanded). |
+
+### Freshness — auto-reingest (Phase 3)
+
+| Var | Default | Notes |
+|---|---|---|
+| `FRESHNESS_ENABLED` | `true` | Master switch for the watcher + poller. |
+| `FRESHNESS_WATCH_ENABLED` | `true` | Filesystem watcher for local (mounted) repos. |
+| `FRESHNESS_POLL_INTERVAL_SECONDS` | `180` | How often managed (git-URL) repos are polled. |
+| `FRESHNESS_DEBOUNCE_MS` | `3000` | Quiet window after a burst of edits before reingest. |
+| `FRESHNESS_FORCE_POLLING` | `false` | Force watchfiles polling on non-inotify filesystems. |
+| `MANAGED_REPOS_ROOT` | `/managed` | Writable workspace for git-cloned managed repos. |
+| `LOCAL_REPOS_ROOT` | `/repos` | Mounted read-only code the watcher observes. |
+| `GITHUB_TOKEN` | empty | Optional, for cloning private managed repos. |
+| `WEBHOOK_SECRET` | empty | Optional fallback for git-push webhook signature verification (usually generated at `POST /config/webhook-secret/generate`). |
+
+### Runtime config + onboarding
+
+Beyond these env vars, a runtime-config layer (Postgres `app_config`,
+**Postgres-over-env** precedence) lets operators change settings WITHOUT a
+restart via the first-run wizard (`/setup`, `memcl setup`) and the `/config`
+endpoints: generate/rotate the MCP key, set/clear the OpenAI key, choose the
+embedding mode, generate the webhook secret, and mint **named, revocable API
+tokens**. When `app_config` is empty, everything falls back to env (backward
+compatible). See **[22_SECURITY_AND_ACCESS_CONTROL](22_SECURITY_AND_ACCESS_CONTROL.md)**.
 
 ### Retrieval (Phase 4)
 

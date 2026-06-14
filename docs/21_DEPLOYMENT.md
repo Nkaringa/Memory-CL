@@ -69,7 +69,7 @@ health gate at every container startup:
 | 3 | `graph_vector_validation` | shard routers + `graph_repo.neighbors` |
 | 4 | `ingestion_readiness` | `units_repo` exposes upsert/list/delete |
 | 5 | `retrieval_warmup` | `RankingModel` + `QueryPlanner` constructible |
-| 6 | `mcp_registry` | default registry has 7 tools |
+| 6 | `mcp_registry` | default registry exposes 14 tools |
 | 7 | `audit_chain` | empty audit chain `verify_chain()` returns True |
 | 8 | `api_exposure` (optional) | `app.state.app_state` populated |
 

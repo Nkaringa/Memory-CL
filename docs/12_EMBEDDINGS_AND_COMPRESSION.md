@@ -91,19 +91,35 @@ This is intentional:
 - Real model-backed embedders plug in at the Protocol boundary
   without changing any caller.
 
-### OpenAI provider (Phase-3)
+### Two real providers (chosen by `embedding_mode`)
 
-`core/embeddings/openai_embedder.py::OpenAIEmbedder` — production
-embedder using OpenAI's REST API:
+Embeddings are live. `apps/api/embedding_runtime.build_runtime_embedder`
+selects the embedder from `RuntimeConfig.embedding_mode()` — settable at
+runtime via `POST /config/embedding-mode` (server default `openai`, lite
+default `local`). The query side and document side build through the SAME
+factory, so they can never diverge on model or dimension (a mismatch makes
+cosine scores noise).
 
-- **Model:** `text-embedding-3-small`, **1536-dim** — matches the
-  existing Qdrant collections; no schema migration needed.
-- **Enable:** set `OPENAI_API_KEY` in your environment (`.env`,
-  secret manager, or `docker-compose` override). Empty / absent key
-  → `DeterministicEmbedder` placeholder behavior is preserved; the
-  vector channel returns 0 hits.
-- **Backfill:** `POST /ingest/reembed {repo_id}` re-embeds all
-  stored units for a repo. CLI: `memcl reembed --repo-id <id>`.
+**OpenAI** — `core/embeddings/openai_embedder.py::OpenAIEmbedder`:
+- **Model:** `text-embedding-3-small`, **1536-dim**. Set `OPENAI_API_KEY`
+  (usually via `POST /config/openai-key`). With no key, `openai` mode is
+  disabled and falls back to the deterministic placeholder.
+
+**Local (on-device)** — `core/embeddings/local_embedder.py::LocalEmbedder`:
+- **Model:** fastembed `BAAI/bge-small-en-v1.5`, **384-dim** — runs on CPU,
+  **no API key, no network** (the model is cached locally on first use).
+- Lazy ONNX load; `embed_batch` runs the encode off the event loop.
+- This is the lite-mode default and a free upgrade-path for the server tier.
+
+**Switching modes** rebuilds each repo's vector collection at the new
+dimension and re-embeds (`POST /config/embedding-mode` does this), since
+1536↔384 collections are incompatible.
+
+**Backfill (same provider):** `POST /ingest/reembed {repo_id}` re-embeds a
+repo's stored units. CLI: `memcl reembed --repo-id <id>`.
+
+`DeterministicEmbedder` (SHA-512 hash → fixed-length vector, no semantics)
+remains the fallback when embeddings are disabled and the default in tests.
 
 ## Embedding pipeline
 

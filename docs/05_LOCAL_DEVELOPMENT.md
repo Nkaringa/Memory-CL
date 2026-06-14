@@ -61,7 +61,7 @@ unit suite. The golden tests use the in-tree fixture
 3. Register it in `apps/mcp/registry.py::build_default_registry()`.
 4. Test it: `tests/test_mcp_tools.py` patterns.
 5. Bump `MCP_TOOL_COUNT` expectations (only if tests assert exact
-   counts — `test_default_registry_exposes_all_seven_tools` is the
+   counts — `test_default_registry_exposes_v2_surface` is the
    one to update).
 
 ### Add a new HTTP route
