@@ -50,6 +50,8 @@ export default function SettingsPage() {
 
       <AccessKeysPanel />
 
+      <WebhooksPanel />
+
       <Panel title="Ranking weights" className="mb-3.5">
         <div className="px-4 py-4">
           <div className="mb-3 text-[12.5px] text-muted">
@@ -305,6 +307,91 @@ function Row({ k, children }: { k: string; children: React.ReactNode }) {
       <span className="text-muted2">{k}</span>
       <span>{children}</span>
     </div>
+  );
+}
+
+/** Git push webhook — generate a signing secret + show the URL to paste
+ *  into GitHub/GitLab so a push instantly re-ingests the managed repo. */
+function WebhooksPanel() {
+  const client = getMemoryClient();
+  const qc = useQueryClient();
+  const config = useQuery({ queryKey: ["config"], queryFn: () => client.getConfig() });
+  const [secret, setSecret] = useState<string | null>(null);
+  const origin = typeof window !== "undefined" ? window.location.origin : "<origin>";
+  const webhookUrl = `${origin}/webhooks/git`;
+
+  const generate = useMutation({
+    mutationFn: () => client.generateWebhookSecret(),
+    onSuccess: (r) => {
+      setSecret(r.secret);
+      qc.invalidateQueries({ queryKey: ["config"] });
+    },
+  });
+
+  const configured = config.data?.has_webhook_secret ?? false;
+
+  return (
+    <Panel title="Git webhook (instant freshness)" className="mb-3.5">
+      <div className="px-4 py-4">
+        <div className="mb-3 text-[12.5px] text-muted">
+          For <b>managed</b> repos, a push to your git host can trigger an immediate re-ingest
+          (instead of waiting for the poll). Generate a signing secret, then add a webhook in your
+          repo pointing at the URL below.
+        </div>
+
+        <Row k="status">
+          <span className={configured ? "font-medium text-accentInk" : "text-muted2"}>
+            {configured ? "secret set" : "not set"}
+          </span>
+        </Row>
+
+        <div className="mt-3">
+          <label className="mb-1 block text-[11.5px] text-muted2">payload URL</label>
+          <pre className="overflow-x-auto whitespace-pre rounded-lg bg-[#1d1d1b] px-4 py-2.5 font-mono text-[12.5px] text-[#e6e6e6]">
+            {webhookUrl}
+          </pre>
+          <div className="mt-2">
+            <CopyBtn text={webhookUrl}>copy URL</CopyBtn>
+          </div>
+        </div>
+
+        {secret ? (
+          <div className="mt-3">
+            <div className="mb-2 flex items-center gap-2.5 rounded-lg border border-[#f3e2c0] bg-warnSoft px-3.5 py-2.5 text-[12.5px] text-[#8a5a00]">
+              Save this secret now — it won&apos;t be shown again. Paste it into the webhook&apos;s
+              <b> Secret</b> field.
+            </div>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-lg bg-[#1d1d1b] px-4 py-3 font-mono text-[12.5px] text-[#e6e6e6]">
+              {secret}
+            </pre>
+            <div className="mt-2 flex gap-2">
+              <CopyBtn text={secret}>copy secret</CopyBtn>
+              <Btn onClick={() => setSecret(null)}>done</Btn>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-3">
+            <Btn primary onClick={() => generate.mutate()} className={generate.isPending ? "pointer-events-none opacity-50" : ""}>
+              {generate.isPending ? "Generating…" : configured ? "Regenerate secret" : "Generate secret"}
+            </Btn>
+            {generate.isError ? (
+              <div className="mt-2 text-[12px] text-bad">Could not generate the secret.</div>
+            ) : null}
+          </div>
+        )}
+
+        <div className="mt-4 text-[12px] text-muted">
+          <b>GitHub:</b> repo → Settings → Webhooks → Add webhook → set the Payload URL above,
+          Content-type <span className="font-mono">application/json</span>, the Secret, and the
+          <span className="font-mono"> push</span> event. <b>GitLab:</b> Settings → Webhooks → URL +
+          Secret token, Push events.
+        </div>
+        <div className="mt-2 text-[12px] text-muted2">
+          Note: your git host must be able to reach this URL — for a private/NAT&apos;d host that
+          needs a tunnel (e.g. cloudflared). Without it, the poller still keeps managed repos fresh.
+        </div>
+      </div>
+    </Panel>
   );
 }
 

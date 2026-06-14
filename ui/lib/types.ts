@@ -369,6 +369,11 @@ export interface SyncResult {
   error: string | null;
 }
 
+/** One-time webhook secret reveal from generate. */
+export interface WebhookSecretResult {
+  secret: string;
+}
+
 /** One-time key reveal from generate / rotate. */
 export interface McpKeyResponse {
   api_key: string;
