@@ -904,6 +904,35 @@ def _repo_flag(parser: argparse.ArgumentParser, *, required: bool = False) -> No
     )
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    """Start Memory-CL in LITE mode on localhost — embedded SQLite/numpy
+    backends, no Docker, no databases. Runs uvicorn in this process (so it
+    must be handled before the async client dispatch)."""
+    import os
+    import webbrowser
+
+    os.environ["MODE"] = "lite"
+    if getattr(args, "data_dir", None):
+        os.environ["LITE_DATA_DIR"] = args.data_dir
+    # Drop any cached server-mode Settings so the app boots in lite.
+    from core import get_settings
+    get_settings.cache_clear()
+
+    host, port = args.host, args.port
+    url = f"http://{host}:{port}"
+    data_dir = os.environ.get("LITE_DATA_DIR", "~/.memcl")
+    print(f"Memory-CL (lite) → {url}   ·   data: {data_dir}   ·   Ctrl-C to stop")
+    if not args.no_open:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+    import uvicorn
+
+    uvicorn.run("apps.api.main:app", host=host, port=port, log_level="warning")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="memcl",
@@ -1000,6 +1029,17 @@ def build_parser() -> argparse.ArgumentParser:
     pt_revoke.add_argument("id", help="token id (from `memcl token list`)")
     pt_revoke.set_defaults(func=_cmd_token)
     p_token.set_defaults(func=_cmd_token)
+
+    p_serve = sub.add_parser(
+        "serve", parents=[common],
+        help="run Memory-CL locally in LITE mode (no Docker; pip-install-and-go)",
+    )
+    p_serve.add_argument("--host", default="127.0.0.1", help="bind host (default 127.0.0.1)")
+    p_serve.add_argument("--port", type=int, default=8000, help="bind port (default 8000)")
+    p_serve.add_argument("--data-dir", default=None, help="lite data dir (default ~/.memcl)")
+    p_serve.add_argument("--no-open", action="store_true", help="don't open the browser")
+    # func is unused for serve (handled before async dispatch) but set for uniformity.
+    p_serve.set_defaults(func=None)
 
     p_search = sub.add_parser(
         "search", parents=[common],
@@ -1178,6 +1218,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    # `serve` starts the server in THIS process (its own event loop), so it
+    # can't run inside the async client dispatch — handle it first.
+    if args.command == "serve":
+        return _cmd_serve(args)
     return asyncio.run(_dispatch(args))
 
 

@@ -71,12 +71,15 @@ def get_token_cache(request: Request) -> TokenCache:
 
 
 def get_repo_registry(request: Request) -> RepoRegistryRepository:
-    """The Phase-3 freshness repo registry attached during lifespan."""
+    """The Phase-3 freshness repo registry attached during lifespan.
+
+    Not an isinstance check: lite mode supplies a duck-compatible SQLite
+    repo (same surface, different class), so we only assert it's wired.
+    """
     registry = getattr(request.app.state, "repo_registry", None)
     if registry is None:
         raise RuntimeError("RepoRegistryRepository not initialized — lifespan did not run")
-    assert isinstance(registry, RepoRegistryRepository)
-    return registry
+    return registry  # type: ignore[no-any-return]
 
 
 PostgresDep = Annotated[PostgresClient, Depends(get_postgres)]

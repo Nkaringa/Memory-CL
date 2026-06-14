@@ -31,6 +31,11 @@ dependencies = [
   # ONNX models (onnxruntime + tokenizers) with prebuilt manylinux wheels.
   "fastembed>=0.7,<0.9",
 
+  # Lite mode — embedded SQLite backend (no Docker). aiosqlite is the async
+  # driver SQLAlchemy uses; numpy (already pulled by qdrant/fastembed) powers
+  # the brute-force vector search.
+  "aiosqlite>=0.20",
+
   # Repo walking
   "pathspec>=0.12",
 
