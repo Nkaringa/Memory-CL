@@ -19,3 +19,24 @@ class CreateTeamRequest(BaseModel):
 class AddTeamMemberRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     user_id: str
+
+
+class CreateInvitationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: str
+    role: str
+
+
+class AcceptInviteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str
+    email: str | None = None
+    password: str | None = None
+    display_name: str | None = None
+
+
+class CreateGrantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    subject_type: str
+    subject_id: str
+    access: str

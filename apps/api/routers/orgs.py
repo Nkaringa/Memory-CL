@@ -7,15 +7,30 @@ All endpoints operate on the org that the authenticated principal belongs to
 from __future__ import annotations
 
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 
-from apps.api.auth_deps import PrincipalDep
-from apps.api.dependencies import MembershipRepoDep, TeamRepoDep, UserRepoDep
+from apps.api.auth_deps import PrincipalDep, hash_session_token, new_session_token
+from apps.api.dependencies import (
+    InvitationRepoDep,
+    MembershipRepoDep,
+    RepoGrantRepoDep,
+    RepoRegistryDep,
+    TeamRepoDep,
+    UserRepoDep,
+)
 from core.auth.principal import ROLE_ADMIN, ROLE_OWNER, Principal
-from schemas.orgs import AddTeamMemberRequest, CreateTeamRequest, SetRoleRequest
+from schemas.orgs import (
+    AddTeamMemberRequest,
+    CreateGrantRequest,
+    CreateInvitationRequest,
+    CreateTeamRequest,
+    SetRoleRequest,
+)
+from storage.org_repo import DEFAULT_ORG_ID
 
 router = APIRouter(prefix="/orgs", tags=["orgs"])
 
@@ -215,3 +230,130 @@ async def list_team_members(
             "display_name": user.display_name if user else "",
         })
     return {"members": result}
+
+
+# ---------------------------------------------------------------------------
+# Invitations
+# ---------------------------------------------------------------------------
+
+_VALID_ACCESS = {"read", "write", "admin"}
+
+
+@router.post("/invitations")
+async def create_invitation(
+    body: CreateInvitationRequest,
+    principal: OrgAdminDep,
+    invitation_repo: InvitationRepoDep,
+) -> dict:
+    """Create an org invitation. Returns the raw invite token once (not stored)."""
+    if body.role not in _VALID_ROLES:
+        raise HTTPException(status_code=422, detail=f"role must be one of {sorted(_VALID_ROLES)}")
+    raw = new_session_token()
+    inv_id = secrets.token_urlsafe(8)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    await invitation_repo.create(
+        id=inv_id,
+        org_id=principal.org_id,
+        email=body.email.strip().lower(),
+        role=body.role,
+        token_hash=hash_session_token(raw),
+        invited_by=principal.user_id,
+        expires_at=expires_at,
+    )
+    return {"id": inv_id, "invite_token": raw, "accept_path": "/accept-invite?token=" + raw}
+
+
+@router.get("/invitations")
+async def list_invitations(
+    principal: OrgAdminDep,
+    invitation_repo: InvitationRepoDep,
+) -> dict:
+    """List pending (and all) invitations for the org."""
+    rows = await invitation_repo.list_for_org(principal.org_id)
+    return {
+        "invitations": [
+            {
+                "id": r.id,
+                "email": r.email,
+                "role": r.role,
+                "status": r.status,
+                "expires_at": r.expires_at.isoformat(),
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.delete("/invitations/{inv_id}")
+async def revoke_invitation(
+    inv_id: str,
+    principal: OrgAdminDep,
+    invitation_repo: InvitationRepoDep,
+) -> dict:
+    """Revoke a pending invitation."""
+    await invitation_repo.revoke(inv_id)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Per-repo grants
+# ---------------------------------------------------------------------------
+
+
+@router.post("/repos/{repo_id}/grants")
+async def create_grant(
+    repo_id: str,
+    body: CreateGrantRequest,
+    principal: OrgAdminDep,
+    repo_grant_repo: RepoGrantRepoDep,
+    repo_registry: RepoRegistryDep,
+) -> dict:
+    """Grant a team or user access to a specific repo."""
+    if body.subject_type not in {"team", "user"}:
+        raise HTTPException(status_code=422, detail="subject_type must be 'team' or 'user'")
+    if body.access not in _VALID_ACCESS:
+        raise HTTPException(status_code=422, detail=f"access must be one of {sorted(_VALID_ACCESS)}")
+
+    # Verify the repo belongs to this org. Missing registry rows default to "default" org.
+    reg = await repo_registry.get(repo_id)
+    repo_org = reg.org_id if reg is not None else DEFAULT_ORG_ID
+    if repo_org != principal.org_id:
+        raise HTTPException(status_code=403, detail="repo not in your org")
+
+    grant_id = secrets.token_urlsafe(8)
+    row = await repo_grant_repo.grant(
+        id=grant_id,
+        org_id=principal.org_id,
+        repo_id=repo_id,
+        subject_type=body.subject_type,
+        subject_id=body.subject_id,
+        access=body.access,
+    )
+    return {"id": row.id, "repo_id": row.repo_id, "subject_type": row.subject_type, "subject_id": row.subject_id, "access": row.access}
+
+
+@router.get("/repos/{repo_id}/grants")
+async def list_grants(
+    repo_id: str,
+    principal: OrgAdminDep,
+    repo_grant_repo: RepoGrantRepoDep,
+) -> dict:
+    """List grants for a repo."""
+    rows = await repo_grant_repo.list_for_repo(repo_id=repo_id)
+    return {
+        "grants": [
+            {"id": r.id, "subject_type": r.subject_type, "subject_id": r.subject_id, "access": r.access}
+            for r in rows
+        ]
+    }
+
+
+@router.delete("/grants/{grant_id}")
+async def revoke_grant(
+    grant_id: str,
+    principal: OrgAdminDep,
+    repo_grant_repo: RepoGrantRepoDep,
+) -> dict:
+    """Revoke a repo grant."""
+    await repo_grant_repo.revoke(grant_id)
+    return {"ok": True}
