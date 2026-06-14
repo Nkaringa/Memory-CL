@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from apps.api.state import AppState
+from core.auth.session_cache import SessionCache
 from core.config_runtime import RuntimeConfig
 from core.token_cache import TokenCache
 from storage import (
@@ -14,6 +15,7 @@ from storage import (
     RedisClient,
     RepoRegistryRepository,
 )
+from storage.repositories import MembershipRepository, OrgRepository, SessionRepository, UserRepository
 
 
 def get_app_state(request: Request) -> AppState:
@@ -88,3 +90,43 @@ Neo4jDep = Annotated[Neo4jClient, Depends(get_neo4j)]
 RedisDep = Annotated[RedisClient, Depends(get_redis)]
 RepoRegistryDep = Annotated[RepoRegistryRepository, Depends(get_repo_registry)]
 TokenCacheDep = Annotated[TokenCache, Depends(get_token_cache)]
+
+
+def get_org_repo(state: AppStateDep) -> OrgRepository:
+    if state.org_repo is None:
+        raise RuntimeError("OrgRepository not initialized — lifespan did not run")
+    return state.org_repo
+
+
+def get_user_repo(state: AppStateDep) -> UserRepository:
+    if state.user_repo is None:
+        raise RuntimeError("UserRepository not initialized — lifespan did not run")
+    return state.user_repo
+
+
+def get_membership_repo(state: AppStateDep) -> MembershipRepository:
+    if state.membership_repo is None:
+        raise RuntimeError("MembershipRepository not initialized — lifespan did not run")
+    return state.membership_repo
+
+
+def get_session_repo(state: AppStateDep) -> SessionRepository:
+    if state.session_repo is None:
+        raise RuntimeError("SessionRepository not initialized — lifespan did not run")
+    return state.session_repo
+
+
+def get_session_cache(request: Request) -> SessionCache:
+    """The session-ID cache attached during lifespan (mirrors get_token_cache)."""
+    cache = getattr(request.app.state, "session_cache", None)
+    if cache is None:
+        raise RuntimeError("SessionCache not initialized — lifespan did not run")
+    assert isinstance(cache, SessionCache)
+    return cache
+
+
+OrgRepoDep = Annotated[OrgRepository, Depends(get_org_repo)]
+UserRepoDep = Annotated[UserRepository, Depends(get_user_repo)]
+MembershipRepoDep = Annotated[MembershipRepository, Depends(get_membership_repo)]
+SessionRepoDep = Annotated[SessionRepository, Depends(get_session_repo)]
+SessionCacheDep = Annotated[SessionCache, Depends(get_session_cache)]

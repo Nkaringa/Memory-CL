@@ -27,6 +27,10 @@ from storage import (
     Neo4jGraphRepository,
     PostgresClient,
     PostgresIngestionRepository,
+    PostgresMembershipRepository,
+    PostgresOrgRepository,
+    PostgresSessionRepository,
+    PostgresUserRepository,
     QdrantStorageClient,
     QdrantVectorRepository,
     RedisClient,
@@ -103,6 +107,11 @@ def _build_state() -> tuple[
         graph_repo=Neo4jGraphRepository(driver_proxy(nj)),
         vector_repo=QdrantVectorRepository(client_proxy(qd)),
         embedder=None,  # deterministic fallback; upgraded post-refresh
+        # Identity repos (Task 9)
+        org_repo=PostgresOrgRepository(engine_proxy(pg)),
+        user_repo=PostgresUserRepository(engine_proxy(pg)),
+        membership_repo=PostgresMembershipRepository(engine_proxy(pg)),
+        session_repo=PostgresSessionRepository(engine_proxy(pg)),
     )
     return state, app_config_repo, repo_registry, runtime, token_cache
 
@@ -126,8 +135,12 @@ def _build_lite_state(settings: Settings) -> tuple[
     from storage.lite.engine import expand_data_dir, make_sqlite_engine
     from storage.lite.graph_repo import LiteGraphRepository
     from storage.lite.ingestion_repo import SqliteIngestionRepository
+    from storage.lite.membership_repo import SqliteMembershipRepository
+    from storage.lite.org_repo import SqliteOrgRepository
     from storage.lite.redis_stub import LiteRedisClient
     from storage.lite.repo_registry_repo import SqliteRepoRegistryRepository
+    from storage.lite.session_repo import SqliteSessionRepository
+    from storage.lite.user_repo import SqliteUserRepository
     from storage.lite.vector_repo import LiteVectorStore
 
     data_dir = expand_data_dir(settings.lite_data_dir)
@@ -151,6 +164,11 @@ def _build_lite_state(settings: Settings) -> tuple[
         "graph_repo": LiteGraphRepository(engine),
         "vector_repo": vector_store,
         "embedder": None,  # upgraded to LocalEmbedder post-refresh (lite default)
+        # Identity repos (Task 9)
+        "org_repo": SqliteOrgRepository(engine),
+        "user_repo": SqliteUserRepository(engine),
+        "membership_repo": SqliteMembershipRepository(engine),
+        "session_repo": SqliteSessionRepository(engine),
     }
     state = AppState.with_default_embedder(**state_kwargs)
     _log.info("lite_mode_state_built", data_dir=str(data_dir))
@@ -291,6 +309,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _seed_app_config_from_env(app_config_repo, settings)
         await runtime.refresh()
         await token_cache.refresh()
+        # Identity repos schema + default org seed (Task 9). Runs after
+        # token_cache so the users table exists before auth endpoints are live.
+        if state.org_repo is not None:
+            await asyncio.gather(
+                state.org_repo.ensure_schema(),
+                state.user_repo.ensure_schema(),  # type: ignore[union-attr]
+                state.membership_repo.ensure_schema(),  # type: ignore[union-attr]
+                state.session_repo.ensure_schema(),  # type: ignore[union-attr]
+            )
+            await state.org_repo.ensure_default_org()
+            from core.auth.session_cache import SessionCache
+            session_cache = SessionCache(state.session_repo)  # type: ignore[arg-type]
+            await session_cache.refresh()
+            app.state.session_cache = session_cache
         # Upgrade the deterministic placeholder embedder to the
         # model-backed one when the RESOLVED (Postgres-over-env) config
         # enables embeddings. Built here (not in _build_state) because the
