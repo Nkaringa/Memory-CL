@@ -89,6 +89,59 @@ async def get_principal(
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 
 
+async def get_principal_soft(request: Request) -> Principal:
+    """Resolve caller identity without hard infrastructure dependencies.
+
+    Identical logic to `get_principal` but reads all auth state from
+    `request.app.state` defensively (via `getattr`) instead of through
+    FastAPI dependency injection.  This makes it safe to use on routes
+    whose unit tests mount a minimal app that does not wire up the full
+    identity repos / session cache — the function gracefully returns
+    anonymous when any piece is absent.
+
+    Priority (same as get_principal):
+    1. Valid session cookie → user Principal with org roles.
+    2. Accepted MCP API key → agent Principal.
+    3. Neither (or missing infra) → anonymous Principal.
+    """
+    # --- session-cookie path ---
+    raw = request.cookies.get(COOKIE_NAME)
+    if raw:
+        session_cache = getattr(request.app.state, "session_cache", None)
+        if session_cache is not None:
+            sid = hash_session_token(raw)
+            if session_cache.is_valid(sid):
+                app_state = getattr(request.app.state, "app_state", None)
+                if app_state is not None:
+                    session_repo = getattr(app_state, "session_repo", None)
+                    membership_repo = getattr(app_state, "membership_repo", None)
+                    if session_repo is not None and membership_repo is not None:
+                        sess = await session_repo.get_active(sid)
+                        if sess is not None:
+                            m = await membership_repo.get_membership(
+                                user_id=sess.user_id, org_id=sess.active_org_id
+                            )
+                            roles: tuple[str, ...] = (m.role,) if m else ()
+                            return Principal(
+                                kind="user",
+                                user_id=sess.user_id,
+                                org_id=sess.active_org_id,
+                                email="",
+                                roles=roles,
+                                is_authenticated=True,
+                            )
+
+    # --- API-key path (resolve_presented_key reads request headers + app.state) ---
+    key = resolve_presented_key(request)
+    if key is not None:
+        return Principal.agent(org_id=DEFAULT_ORG_ID)
+
+    return Principal.anonymous()
+
+
+SoftPrincipalDep = Annotated[Principal, Depends(get_principal_soft)]
+
+
 async def require_principal(principal: PrincipalDep) -> Principal:
     """Dependency that raises 401 when the caller is not authenticated."""
     if not principal.is_authenticated:
