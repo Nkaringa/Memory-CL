@@ -13,6 +13,7 @@ from storage.qdrant import QdrantStorageClient
 from storage.qdrant_repo import QdrantVectorRepository
 from storage.redis import RedisClient
 from storage.repo_registry_repo import RepoRegistryRepository, RepoRegistryRow
+from storage.repo_grant_repo import PostgresRepoGrantRepository, RepoGrantRow
 from storage.repositories import (
     AuthProviderRepository,
     FederatedIdentityRepository,
@@ -21,6 +22,7 @@ from storage.repositories import (
     MembershipRepository,
     OrgRepository,
     QnameMatch,
+    RepoGrantRepository,
     RepoSummary,
     SessionRepository,
     TeamRepository,
@@ -74,7 +76,10 @@ __all__ = [
     "StorageHealth",
     "TeamRepository",
     "TeamRow",
+    "PostgresRepoGrantRepository",
     "PostgresTeamRepository",
+    "RepoGrantRepository",
+    "RepoGrantRow",
     "UserRepository",
     "UserRow",
     "VectorHit",
