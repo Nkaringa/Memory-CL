@@ -17,6 +17,7 @@ from storage.repo_registry_repo import RepoRegistryRow
 _DDL = """
 CREATE TABLE IF NOT EXISTS repo_registry (
     repo_id         TEXT PRIMARY KEY,
+    org_id          TEXT NOT NULL DEFAULT 'default',
     source_type     TEXT NOT NULL DEFAULT 'local',
     repo_path       TEXT NOT NULL,
     remote_url      TEXT,
@@ -31,12 +32,17 @@ CREATE TABLE IF NOT EXISTS repo_registry (
 )
 """
 
+# Defensive migration for pre-existing SQLite files — SQLite lacks
+# ADD COLUMN IF NOT EXISTS, so we catch the "duplicate column" error.
+_MIGRATE_ORG_ID = "ALTER TABLE repo_registry ADD COLUMN org_id TEXT NOT NULL DEFAULT 'default'"
+
 _UPSERT_LOCAL = text("""
 INSERT INTO repo_registry (
-    repo_id, source_type, repo_path, last_commit_sha,
+    repo_id, org_id, source_type, repo_path, last_commit_sha,
     last_synced_at, created_at, updated_at
-) VALUES (:repo_id, 'local', :repo_path, :last_commit_sha, :ts, :ts, :ts)
+) VALUES (:repo_id, :org_id, 'local', :repo_path, :last_commit_sha, :ts, :ts, :ts)
 ON CONFLICT(repo_id) DO UPDATE SET
+    org_id          = excluded.org_id,
     repo_path       = excluded.repo_path,
     last_commit_sha = excluded.last_commit_sha,
     last_synced_at  = excluded.last_synced_at,
@@ -46,11 +52,12 @@ ON CONFLICT(repo_id) DO UPDATE SET
 
 _UPSERT_MANAGED = text("""
 INSERT INTO repo_registry (
-    repo_id, source_type, repo_path, remote_url, branch,
+    repo_id, org_id, source_type, repo_path, remote_url, branch,
     last_commit_sha, last_synced_at, created_at, updated_at
-) VALUES (:repo_id, 'managed', :repo_path, :remote_url, :branch,
+) VALUES (:repo_id, :org_id, 'managed', :repo_path, :remote_url, :branch,
           :last_commit_sha, :ts, :ts, :ts)
 ON CONFLICT(repo_id) DO UPDATE SET
+    org_id          = excluded.org_id,
     source_type     = 'managed',
     repo_path       = excluded.repo_path,
     remote_url      = excluded.remote_url,
@@ -89,11 +96,13 @@ def _dt(v: Any) -> datetime | None:
 def _row(row: Any) -> RepoRegistryRow:
     m = row._mapping if hasattr(row, "_mapping") else row
     return RepoRegistryRow(
-        repo_id=m["repo_id"], source_type=m["source_type"], repo_path=m["repo_path"],
+        repo_id=m["repo_id"],
+        source_type=m["source_type"], repo_path=m["repo_path"],
         remote_url=m["remote_url"], branch=m["branch"], last_commit_sha=m["last_commit_sha"],
         watch_enabled=bool(m["watch_enabled"]), last_synced_at=_dt(m["last_synced_at"]),
         last_change_at=_dt(m["last_change_at"]), last_error=m["last_error"],
         created_at=_dt(m["created_at"]), updated_at=_dt(m["updated_at"]),
+        org_id=m["org_id"],
     )
 
 
@@ -106,6 +115,13 @@ class SqliteRepoRegistryRepository:
     async def ensure_schema(self) -> None:
         async with self._engine.begin() as conn:
             await conn.execute(text(_DDL))
+            # Defensive migration for pre-existing SQLite files that lack org_id.
+            # SQLite has no ADD COLUMN IF NOT EXISTS, so we catch the duplicate-column error.
+            try:
+                await conn.execute(text(_MIGRATE_ORG_ID))
+            except Exception as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
 
     async def list_all(self) -> list[RepoRegistryRow]:
         async with self._engine.connect() as conn:
@@ -120,22 +136,24 @@ class SqliteRepoRegistryRepository:
             return _row(row) if row else None
 
     async def upsert_local(
-        self, repo_id: str, repo_path: str, commit_sha: str | None
+        self, repo_id: str, repo_path: str, commit_sha: str | None,
+        org_id: str = "default",
     ) -> None:
         async with self._engine.begin() as conn:
             await conn.execute(_UPSERT_LOCAL, {
-                "repo_id": repo_id, "repo_path": repo_path,
+                "repo_id": repo_id, "org_id": org_id, "repo_path": repo_path,
                 "last_commit_sha": commit_sha, "ts": datetime.now(UTC).isoformat(),
             })
 
     async def add_managed(
         self, repo_id: str, repo_path: str, remote_url: str,
         branch: str | None, commit_sha: str | None,
+        org_id: str = "default",
     ) -> None:
         async with self._engine.begin() as conn:
             await conn.execute(_UPSERT_MANAGED, {
-                "repo_id": repo_id, "repo_path": repo_path, "remote_url": remote_url,
-                "branch": branch, "last_commit_sha": commit_sha,
+                "repo_id": repo_id, "org_id": org_id, "repo_path": repo_path,
+                "remote_url": remote_url, "branch": branch, "last_commit_sha": commit_sha,
                 "ts": datetime.now(UTC).isoformat(),
             })
 

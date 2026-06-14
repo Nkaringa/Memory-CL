@@ -40,6 +40,7 @@ _DDL_STATEMENTS: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS repo_registry (
         repo_id         TEXT PRIMARY KEY,
+        org_id          TEXT NOT NULL DEFAULT 'default',
         source_type     TEXT NOT NULL DEFAULT 'local',
         repo_path       TEXT NOT NULL,
         remote_url      TEXT,
@@ -53,6 +54,9 @@ _DDL_STATEMENTS: tuple[str, ...] = (
         updated_at      TIMESTAMPTZ
     )
     """,
+    # Idempotent migration — carries an already-deployed table forward
+    # without the org_id column (same pattern as app_config webhook_secret).
+    "ALTER TABLE repo_registry ADD COLUMN IF NOT EXISTS org_id TEXT NOT NULL DEFAULT 'default'",
 )
 
 
@@ -70,6 +74,9 @@ class RepoRegistryRow:
     last_error: str | None
     created_at: datetime | None
     updated_at: datetime | None
+    # Trailing field with default so in-code constructions that predate Phase-3
+    # keep working without passing org_id.
+    org_id: str = "default"
 
 
 # Register/refresh a LOCAL repo (called after a successful /ingest). On
@@ -80,17 +87,19 @@ _UPSERT_LOCAL = text("""
 WITH input AS (
     SELECT
         :repo_id AS repo_id,
+        :org_id AS org_id,
         :repo_path AS repo_path,
         :last_commit_sha AS last_commit_sha,
         CAST(:ts AS TIMESTAMPTZ) AS ts
 )
 INSERT INTO repo_registry (
-    repo_id, source_type, repo_path, last_commit_sha,
+    repo_id, org_id, source_type, repo_path, last_commit_sha,
     last_synced_at, created_at, updated_at
 ) SELECT
-    repo_id, 'local', repo_path, last_commit_sha, ts, ts, ts
+    repo_id, org_id, 'local', repo_path, last_commit_sha, ts, ts, ts
   FROM input
 ON CONFLICT (repo_id) DO UPDATE SET
+    org_id          = EXCLUDED.org_id,
     repo_path       = EXCLUDED.repo_path,
     last_commit_sha = EXCLUDED.last_commit_sha,
     last_synced_at  = EXCLUDED.last_synced_at,
@@ -104,6 +113,7 @@ _UPSERT_MANAGED = text("""
 WITH input AS (
     SELECT
         :repo_id AS repo_id,
+        :org_id AS org_id,
         :repo_path AS repo_path,
         :remote_url AS remote_url,
         :branch AS branch,
@@ -111,13 +121,14 @@ WITH input AS (
         CAST(:ts AS TIMESTAMPTZ) AS ts
 )
 INSERT INTO repo_registry (
-    repo_id, source_type, repo_path, remote_url, branch,
+    repo_id, org_id, source_type, repo_path, remote_url, branch,
     last_commit_sha, last_synced_at, created_at, updated_at
 ) SELECT
-    repo_id, 'managed', repo_path, remote_url, branch,
+    repo_id, org_id, 'managed', repo_path, remote_url, branch,
     last_commit_sha, ts, ts, ts
   FROM input
 ON CONFLICT (repo_id) DO UPDATE SET
+    org_id          = EXCLUDED.org_id,
     source_type     = 'managed',
     repo_path       = EXCLUDED.repo_path,
     remote_url      = EXCLUDED.remote_url,
@@ -178,6 +189,7 @@ def _row_to_registry(row: Any) -> RepoRegistryRow:
         last_error=m["last_error"],
         created_at=m["created_at"],
         updated_at=m["updated_at"],
+        org_id=m["org_id"],
     )
 
 
@@ -219,10 +231,12 @@ class RepoRegistryRepository:
 
     # ----- Writes -----
     async def upsert_local(
-        self, repo_id: str, repo_path: str, commit_sha: str | None
+        self, repo_id: str, repo_path: str, commit_sha: str | None,
+        org_id: str = "default",
     ) -> None:
         params = {
             "repo_id": repo_id,
+            "org_id": org_id,
             "repo_path": repo_path,
             "last_commit_sha": commit_sha,
             "ts": datetime.now(UTC),
@@ -238,9 +252,11 @@ class RepoRegistryRepository:
         remote_url: str,
         branch: str | None,
         commit_sha: str | None,
+        org_id: str = "default",
     ) -> None:
         params = {
             "repo_id": repo_id,
+            "org_id": org_id,
             "repo_path": repo_path,
             "remote_url": remote_url,
             "branch": branch,
