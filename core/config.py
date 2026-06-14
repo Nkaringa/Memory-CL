@@ -87,6 +87,7 @@ class Settings(BaseSettings):
     # MUST provide a key; the auth dependency rejects requests when set.
     mcp_api_key: SecretStr | None = Field(default=None)
     mcp_session_ttl_seconds: int = Field(default=3600, gt=0)
+    session_ttl_seconds: int = Field(default=86400, gt=0)  # human browser session lifetime
 
     # ----- Lifecycle (Phase 6) -----
     # Days without access before an entity is eligible for decay.
