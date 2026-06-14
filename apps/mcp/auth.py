@@ -48,6 +48,40 @@ def _resolve_expected_key(request: Request) -> str | None:
     return expected.get_secret_value()
 
 
+def resolve_presented_key(request: Request) -> str | None:
+    """Return the presented credential if it is accepted, else None.
+
+    Non-raising counterpart to `require_mcp_api_key`: extracts the key from
+    X-API-Key / Authorization: Bearer headers and validates it against the
+    runtime config + token cache, but returns None instead of raising 401
+    when no valid credential is found.  Used by `get_principal` in the API
+    auth layer so cookie-less MCP-agent requests are identified without
+    coupling the principal resolver to HTTP exceptions.
+
+    In dev mode (no auth configured) a request WITHOUT a credential still
+    returns None — only requests that explicitly present a key header are
+    identified as agent callers.  A request that presents a key in dev mode
+    is always accepted (same as `require_mcp_api_key`'s dev-mode pass-through).
+    """
+    x_api_key = request.headers.get("X-API-Key")
+    authorization = request.headers.get("Authorization")
+    presented = _extract_api_key(x_api_key, authorization)
+
+    # No credential presented at all → not an agent caller.
+    if presented is None:
+        return None
+
+    expected = _resolve_expected_key(request)
+    token_cache = getattr(request.app.state, "token_cache", None)
+    if not auth_is_configured(expected, token_cache):
+        # Dev mode: any key that was presented is accepted.
+        return presented
+
+    if not credential_accepted(presented, expected, token_cache):
+        return None
+    return presented
+
+
 def require_mcp_api_key(
     request: Request,
     x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
