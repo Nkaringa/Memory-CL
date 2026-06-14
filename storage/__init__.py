@@ -16,10 +16,12 @@ from storage.repositories import (
     OrgRepository,
     QnameMatch,
     RepoSummary,
+    UserRepository,
     VectorHit,
     VectorPoint,
     VectorRepository,
 )
+from storage.user_repo import PostgresUserRepository, UserRow
 
 __all__ = [
     "ApiTokenRepository",
@@ -38,6 +40,7 @@ __all__ = [
     "PostgresClient",
     "PostgresIngestionRepository",
     "PostgresOrgRepository",
+    "PostgresUserRepository",
     "QdrantStorageClient",
     "QdrantVectorRepository",
     "QnameMatch",
@@ -47,6 +50,8 @@ __all__ = [
     "RepoSummary",
     "StorageClient",
     "StorageHealth",
+    "UserRepository",
+    "UserRow",
     "VectorHit",
     "VectorPoint",
     "VectorRepository",
