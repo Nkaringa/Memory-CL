@@ -2,11 +2,54 @@
 
 ← back to [index](00_INDEX.md) · related: [16_AUDIT_AND_GOVERNANCE](16_AUDIT_AND_GOVERNANCE.md), [21_DEPLOYMENT](21_DEPLOYMENT.md), [08_MCP_TOOLING](08_MCP_TOOLING.md)
 
-Three layers of access control:
+Four layers of access control:
 
-1. **Auth at the network edge** — `MCP_API_KEY` for the agent surface.
-2. **Tenant isolation** — `TenantManager.assert_owns_repo` everywhere.
-3. **Policy engine** — deterministic deny/allow rules.
+1. **Human identity** — Organizations, Users, Memberships, and server-side Sessions (Phase 1).
+2. **Auth at the network edge** — `MCP_API_KEY` / named tokens for the agent surface.
+3. **Tenant isolation** — `TenantManager.assert_owns_repo` everywhere.
+4. **Policy engine** — deterministic deny/allow rules.
+
+## Human identity (Phase 1)
+
+The human-identity layer adds durable Organizations (the tenant boundary for human users),
+Users with local password credentials, Memberships linking users to orgs with a role, and
+server-side Sessions.
+
+### Core concepts
+
+- **Organization** — the top-level tenant boundary. Every user belongs to at least one org.
+- **User** — a human account with an email + argon2id-hashed password credential.
+- **Membership** — a user↔org relationship carrying a role:
+  `owner` | `admin` | `member` | `viewer`.
+- **Session** — a server-side record tied to a browser via an httpOnly cookie. Only the
+  SHA-256 hash of the session token is stored; the raw token is never persisted. Sessions are
+  revocable and expire after `SESSION_TTL_SECONDS` (default 86 400 s / 24 h).
+
+### Auth endpoints
+
+| Endpoint | Who can call | Notes |
+|---|---|---|
+| `POST /auth/register` | First call: anyone (creates org + owner, auto-logs-in). Subsequent calls: owner or admin. | |
+| `POST /auth/login` | Anyone with valid credentials | Sets httpOnly session cookie |
+| `POST /auth/logout` | Authenticated session | Revokes session immediately |
+| `GET /auth/me` | Authenticated session | Returns user + org + role |
+
+### Principal resolution order
+
+Every request resolves a `Principal` in this order:
+
+1. **Session cookie** — httpOnly `memcl_session` cookie → server-side session lookup → human principal with role.
+2. **API token / MCP key** — `X-API-Key` or `Authorization: Bearer` → agent principal.
+3. **Anonymous** — no credentials; allowed only on unauthenticated endpoints.
+
+Config-mutation endpoints (`/config/*`) accept an authenticated session **OR** the API key
+**OR** bootstrap-open (no key configured). Agents continue to use API tokens unchanged.
+
+### What is NOT in Phase 1
+
+- **Federation (OIDC/OAuth — GitHub, Google, Microsoft)** — Phase 2.
+- **Team invitations + per-repo grants + fine-grained RBAC** — Phase 3. Roles exist in the
+  schema but per-repo authorization is not yet enforced beyond the existing tenant gate.
 
 ## MCP API key
 
@@ -183,6 +226,8 @@ See [16_AUDIT_AND_GOVERNANCE](16_AUDIT_AND_GOVERNANCE.md).
 
 ## Hardening checklist
 
+- [ ] At least one owner account registered before exposing to users
+- [ ] `SESSION_TTL_SECONDS` tuned for your environment (default 86400)
 - [ ] `MCP_API_KEY` set in production
 - [ ] `STRICT_BOOTSTRAP=true` in production
 - [ ] Reverse proxy terminates TLS + adds rate limits

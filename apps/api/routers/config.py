@@ -23,14 +23,17 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from apps.api.auth_deps import SoftPrincipalDep
 from apps.api.dependencies import AppStateDep, RuntimeConfigDep, TokenCacheDep
 from apps.api.embedding_runtime import reindex_repo
-from apps.mcp.auth import ApiKeyDep
+from apps.mcp.auth import _extract_api_key
 from core import get_logger, get_settings
+from core.auth import Principal
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -38,6 +41,48 @@ _log = get_logger(__name__)
 
 # Length of generated MCP keys. token_urlsafe(32) → ~43 url-safe chars.
 _MCP_KEY_ENTROPY_BYTES = 32
+
+
+# ---------------------------------------------------------------------------
+# Soft API-key resolver (config-surface only)
+# ---------------------------------------------------------------------------
+def _resolve_api_key_soft(request: Request) -> str | None:
+    """Extract and validate the presented API key WITHOUT raising 401.
+
+    Unlike `require_mcp_api_key` (ApiKeyDep), this dependency returns None
+    when no key is presented or the key is wrong — it never raises.
+    The config gate (`_require_bootstrap_or_authed`) then combines this
+    with the session-based principal to decide whether to allow or reject.
+
+    This decoupling lets session-authenticated users reach the route handler
+    even when no API key is in the request headers.
+    """
+    from apps.mcp.token_auth import auth_is_configured, credential_accepted
+
+    x_api_key_hdr = request.headers.get("X-API-Key")
+    authorization_hdr = request.headers.get("Authorization")
+    presented = _extract_api_key(x_api_key_hdr, authorization_hdr)
+    if presented is None:
+        return None
+
+    runtime = getattr(request.app.state, "runtime_config", None)
+    if runtime is not None:
+        from apps.mcp.auth import _resolve_expected_key
+        expected = _resolve_expected_key(request)
+    else:
+        from core import get_settings as _gs
+        s = _gs()
+        k = s.mcp_api_key
+        expected = k.get_secret_value() if (k and k.get_secret_value().strip()) else None
+
+    token_cache = getattr(request.app.state, "token_cache", None)
+    if not auth_is_configured(expected, token_cache):
+        return presented  # dev mode — any presented key is accepted
+
+    return presented if credential_accepted(presented, expected, token_cache) else None
+
+
+_SoftApiKeyDep = Annotated[str | None, Depends(_resolve_api_key_soft)]
 
 
 # ---------------------------------------------------------------------------
@@ -96,23 +141,31 @@ class EmbeddingModeResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Bootstrap auth helper
 # ---------------------------------------------------------------------------
-def _require_bootstrap_or_authed(runtime: RuntimeConfigDep, api_key: str | None) -> None:
-    """Enforce the bootstrap rule: open when unconfigured, else require key.
+def _require_bootstrap_or_authed(
+    runtime: RuntimeConfigDep,
+    api_key: str | None,
+    principal: Principal | None = None,
+) -> None:
+    """Enforce the bootstrap rule: open when unconfigured, else require auth.
 
-    `api_key` is the result of `ApiKeyDep`. When the system is NOT yet
-    configured, `ApiKeyDep` already short-circuits to dev-mode (returns
-    None) so any caller is allowed — we let it through. Once configured,
-    `ApiKeyDep` has ALREADY enforced the key (raising 401 on miss/wrong),
-    so reaching here means the caller is authenticated. This helper exists
-    to make the rule explicit and to guard the edge case where the key was
-    configured between dependency resolution and handler entry.
+    Passes when ANY of the following is true:
+    - The system is NOT yet configured (bootstrap window — open to all).
+    - A valid API key was presented (`api_key is not None`).
+    - An authenticated human session is active
+      (`principal is not None and principal.is_authenticated`).
+
+    Phase-1 AUTHENTICATION: any authenticated principal (user or agent)
+    satisfies the gate. Fine-grained per-repo RBAC is a later phase.
     """
-    if runtime.configured() and api_key is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key required — this instance is already configured",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    if runtime.configured():
+        has_key = api_key is not None
+        has_session = principal is not None and principal.is_authenticated
+        if not has_key and not has_session:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key required — this instance is already configured",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -136,15 +189,15 @@ async def get_config(runtime: RuntimeConfigDep) -> ConfigStateResponse:
 @router.post("/mcp-key/generate", response_model=GeneratedKeyResponse)
 async def generate_mcp_key(
     runtime: RuntimeConfigDep,
-    api_key: ApiKeyDep,
+    api_key: _SoftApiKeyDep,
+    principal: SoftPrincipalDep,
 ) -> GeneratedKeyResponse:
     """Mint the first MCP key (or replace via the bootstrap rule).
 
     Bootstrap: allowed WITHOUT auth only while unconfigured. Once a key
-    exists, requires the current key (ApiKeyDep enforced it upstream;
-    `_require_bootstrap_or_authed` makes the rule explicit). Returns the
-    new key ONCE — the only chance to copy it."""
-    _require_bootstrap_or_authed(runtime, api_key)
+    exists, requires the current key or an authenticated session.
+    Returns the new key ONCE — the only chance to copy it."""
+    _require_bootstrap_or_authed(runtime, api_key, principal)
     new_key = secrets.token_urlsafe(_MCP_KEY_ENTROPY_BYTES)
     await runtime.repo.set_mcp_api_key(new_key)
     await runtime.refresh()
@@ -154,19 +207,19 @@ async def generate_mcp_key(
 @router.post("/mcp-key/rotate", response_model=GeneratedKeyResponse)
 async def rotate_mcp_key(
     runtime: RuntimeConfigDep,
-    api_key: ApiKeyDep,
+    api_key: _SoftApiKeyDep,
 ) -> GeneratedKeyResponse:
-    """Rotate the MCP key. ALWAYS requires the current key — rotation only
-    makes sense on a configured system, and an anonymous rotate would be a
-    lockout vector. Agents must re-add the new key after this."""
+    """Rotate the MCP key. ALWAYS requires the current API key — rotation
+    only makes sense on a configured system, and an anonymous rotate would
+    be a lockout vector. Intentionally does NOT accept a session principal:
+    key rotation is a privileged operator action requiring explicit proof
+    of the current key. Agents must re-add the new key after this."""
     if not runtime.configured():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="no key configured yet — use /config/mcp-key/generate",
         )
     if api_key is None:
-        # Defensive: ApiKeyDep should already have enforced this when
-        # configured. Belt-and-suspenders so a wiring change can't open it.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="API key required to rotate",
@@ -182,7 +235,8 @@ async def rotate_mcp_key(
 async def set_openai_key(
     body: OpenAiKeyRequest,
     runtime: RuntimeConfigDep,
-    api_key: ApiKeyDep,
+    api_key: _SoftApiKeyDep,
+    principal: SoftPrincipalDep,
 ) -> OkResponse:
     """Set or clear the runtime OpenAI key. Bootstrap-or-authed.
 
@@ -190,7 +244,7 @@ async def set_openai_key(
     null/empty clears the runtime override (falling back to the env key,
     if any). Invalidates the RuntimeConfig cache so embeddings flip on the
     next ingest without a restart."""
-    _require_bootstrap_or_authed(runtime, api_key)
+    _require_bootstrap_or_authed(runtime, api_key, principal)
     key = body.api_key
     if key is not None and key.strip():
         cleaned = key.strip()
@@ -209,12 +263,13 @@ async def set_openai_key(
 @router.post("/webhook-secret/generate", response_model=WebhookSecretResponse)
 async def generate_webhook_secret(
     runtime: RuntimeConfigDep,
-    api_key: ApiKeyDep,
+    api_key: _SoftApiKeyDep,
+    principal: SoftPrincipalDep,
 ) -> WebhookSecretResponse:
     """Generate (or replace) the git-webhook signing secret. Returned ONCE —
     copy it into your GitHub/GitLab webhook settings now. Bootstrap-or-authed
     (open only while the instance is unconfigured)."""
-    _require_bootstrap_or_authed(runtime, api_key)
+    _require_bootstrap_or_authed(runtime, api_key, principal)
     secret = secrets.token_urlsafe(_MCP_KEY_ENTROPY_BYTES)
     await runtime.repo.set_webhook_secret(secret)
     await runtime.refresh()
@@ -226,7 +281,8 @@ async def set_embedding_mode(
     body: EmbeddingModeRequest,
     runtime: RuntimeConfigDep,
     state: AppStateDep,
-    api_key: ApiKeyDep,
+    api_key: _SoftApiKeyDep,
+    principal: SoftPrincipalDep,
 ) -> EmbeddingModeResponse:
     """Choose the embedding mode ('openai' | 'local'). Bootstrap-or-authed.
 
@@ -239,7 +295,7 @@ async def set_embedding_mode(
     skips the re-index. The re-index runs inline; for a self-hosted corpus
     this is seconds-to-minutes — acceptable for an explicit operator action.
     """
-    _require_bootstrap_or_authed(runtime, api_key)
+    _require_bootstrap_or_authed(runtime, api_key, principal)
     if body.mode not in ("openai", "local"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -289,10 +345,11 @@ async def set_embedding_mode(
 @router.post("/complete-onboarding", response_model=OkResponse)
 async def complete_onboarding(
     runtime: RuntimeConfigDep,
-    api_key: ApiKeyDep,
+    api_key: _SoftApiKeyDep,
+    principal: SoftPrincipalDep,
 ) -> OkResponse:
     """Mark the first-run wizard done. Bootstrap-or-authed."""
-    _require_bootstrap_or_authed(runtime, api_key)
+    _require_bootstrap_or_authed(runtime, api_key, principal)
     await runtime.repo.set_onboarding_completed(True)
     await runtime.refresh()
     return OkResponse()
@@ -334,12 +391,13 @@ async def issue_token(
     body: IssueTokenRequest,
     runtime: RuntimeConfigDep,
     tokens: TokenCacheDep,
-    api_key: ApiKeyDep,
+    api_key: _SoftApiKeyDep,
+    principal: SoftPrincipalDep,
 ) -> IssuedTokenResponse:
     """Mint a named API token. The raw token is returned ONCE — copy it now.
     Works everywhere the MCP key works; revoke it individually later.
     Bootstrap-or-authed (open only while the instance is unconfigured)."""
-    _require_bootstrap_or_authed(runtime, api_key)
+    _require_bootstrap_or_authed(runtime, api_key, principal)
     raw, row = await tokens.repo.issue(body.name)
     await tokens.refresh()  # the new token is valid immediately
     return IssuedTokenResponse(
@@ -351,10 +409,11 @@ async def issue_token(
 async def list_tokens(
     runtime: RuntimeConfigDep,
     tokens: TokenCacheDep,
-    api_key: ApiKeyDep,
+    api_key: _SoftApiKeyDep,
+    principal: SoftPrincipalDep,
 ) -> TokenListResponse:
     """List named tokens (masked; never the raw value). Bootstrap-or-authed."""
-    _require_bootstrap_or_authed(runtime, api_key)
+    _require_bootstrap_or_authed(runtime, api_key, principal)
     rows = await tokens.repo.list_all()
     return TokenListResponse(tokens=[
         TokenView(
@@ -371,11 +430,12 @@ async def revoke_token(
     token_id: str,
     runtime: RuntimeConfigDep,
     tokens: TokenCacheDep,
-    api_key: ApiKeyDep,
+    api_key: _SoftApiKeyDep,
+    principal: SoftPrincipalDep,
 ) -> OkResponse:
     """Revoke a named token immediately (next request with it fails).
     Bootstrap-or-authed."""
-    _require_bootstrap_or_authed(runtime, api_key)
+    _require_bootstrap_or_authed(runtime, api_key, principal)
     revoked = await tokens.repo.revoke(token_id)
     if not revoked:
         raise HTTPException(

@@ -406,3 +406,17 @@ export interface ApiErrorBody {
   detail?: string | Record<string, unknown>;
   [key: string]: unknown;
 }
+
+// ---- Auth -----------------------------------------------------------------
+export interface UserView {
+  user_id: string;
+  email: string;
+  display_name: string;
+  org_id: string;
+  roles: string[];
+}
+
+export interface MeResponse {
+  authenticated: boolean;
+  user: UserView | null;
+}

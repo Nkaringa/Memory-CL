@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from core.embeddings import DeterministicEmbedder, Embedder
 from storage import (
@@ -12,6 +12,7 @@ from storage import (
     QdrantVectorRepository,
     RedisClient,
 )
+from storage.repositories import MembershipRepository, OrgRepository, SessionRepository, UserRepository
 
 
 @dataclass
@@ -35,6 +36,13 @@ class AppState:
     # lifespan wires an OpenAIEmbedder when embeddings are enabled and
     # the deterministic fallback otherwise.
     embedder: Embedder
+    # Identity repos (Task 9). Optional so existing test fixtures that
+    # construct AppState without auth plumbing continue to compile;
+    # production lifespan always supplies them.
+    org_repo: OrgRepository | None = field(default=None)
+    user_repo: UserRepository | None = field(default=None)
+    membership_repo: MembershipRepository | None = field(default=None)
+    session_repo: SessionRepository | None = field(default=None)
 
     @classmethod
     def with_default_embedder(
@@ -49,6 +57,10 @@ class AppState:
         vector_repo: QdrantVectorRepository,
         embedding_dimension: int = 1536,
         embedder: Embedder | None = None,
+        org_repo: OrgRepository | None = None,
+        user_repo: UserRepository | None = None,
+        membership_repo: MembershipRepository | None = None,
+        session_repo: SessionRepository | None = None,
     ) -> AppState:
         """Build an AppState, defaulting the embedder when none is given.
 
@@ -69,4 +81,8 @@ class AppState:
                 if embedder is not None
                 else DeterministicEmbedder(dimension=embedding_dimension)
             ),
+            org_repo=org_repo,
+            user_repo=user_repo,
+            membership_repo=membership_repo,
+            session_repo=session_repo,
         )

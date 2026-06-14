@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { getMemoryClient } from "@/lib/api";
+import { fetchMe, logout } from "@/lib/auth";
+import type { UserView } from "@/lib/types";
 import {
   HOME_ITEM,
   NAV_GROUPS,
@@ -48,16 +51,62 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <footer className="mt-auto flex items-center gap-2 border-t border-border px-4 py-2.5 text-[11.5px] text-muted">
-        <span
-          className={cn(
-            "h-1.5 w-1.5 rounded-full",
-            healthy ? "bg-ok shadow-[0_0_0_3px_rgba(14,159,110,0.15)]" : "bg-warn",
-          )}
-        />
-        {healthy ? "all systems healthy" : "degraded"} · v2
-      </footer>
+      <div className="mt-auto border-t border-border">
+        {/* system health line */}
+        <div className="flex items-center gap-2 px-4 py-2 text-[11.5px] text-muted">
+          <span
+            className={cn(
+              "h-1.5 w-1.5 rounded-full",
+              healthy ? "bg-ok shadow-[0_0_0_3px_rgba(14,159,110,0.15)]" : "bg-warn",
+            )}
+          />
+          {healthy ? "all systems healthy" : "degraded"} · v2
+        </div>
+        {/* current user chip */}
+        <UserFooter />
+      </div>
     </aside>
+  );
+}
+
+/** Renders the signed-in user's email + a log-out button at the bottom of
+ *  the sidebar.  Calls fetchMe() once on mount; shows nothing while loading. */
+function UserFooter() {
+  const router = useRouter();
+  const [user, setUser] = useState<UserView | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchMe().then((me) => {
+      if (!cancelled && me.user) setUser(me.user);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleLogout() {
+    await logout();
+    router.replace("/login");
+  }
+
+  if (!user) return null;
+
+  return (
+    <div className="flex items-center gap-2 border-t border-border px-4 py-2.5">
+      <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-accentSoft text-[9px] font-bold uppercase text-accentInk">
+        {user.email.charAt(0)}
+      </span>
+      <span className="flex-1 truncate text-[11.5px] font-medium text-muted2">{user.email}</span>
+      <button
+        type="button"
+        onClick={handleLogout}
+        title="Log out"
+        className="flex-none rounded-md px-1.5 py-0.5 text-[11px] text-muted transition-colors hover:text-bad"
+      >
+        out
+      </button>
+    </div>
   );
 }
 

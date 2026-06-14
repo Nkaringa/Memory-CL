@@ -146,6 +146,9 @@ audit, in-band errors. See [08](08_MCP_TOOLING.md).
 The shared secret gating `POST /mcp/tools/{name}`. Required in
 production. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
 
+### Membership
+The join record between a User and an Organization, carrying a role (`owner | admin | member | viewer`). Stored in the `memberships` table.
+
 ### `memcl`
 The Phase-9 console-script CLI. Six subcommands, JSON stdout,
 deterministic. See [19](19_CLI_REFERENCE.md).
@@ -160,6 +163,9 @@ freshness via polling (or the webhook).
 A graph node's primary key. Equal to `unit_id` for non-EXTERNAL
 nodes. EXTERNAL nodes use `external:<qname>`. See [11](11_GRAPH_SYSTEM.md).
 
+### Organization
+The top-level tenant boundary for human users. Every User belongs to at least one Organization via a Membership. Stored in the `organizations` table.
+
 ### Phase
 A discrete vertical slice of the engine. Phases 1–10 stack additively;
 each ends with a green test gate.
@@ -171,6 +177,9 @@ See [12](12_EMBEDDINGS_AND_COMPRESSION.md).
 ### Policy engine
 Phase-8's deterministic rules engine. Predicates return `ALLOW |
 DENY | NEUTRAL`; first non-NEUTRAL wins. See [16](16_AUDIT_AND_GOVERNANCE.md).
+
+### Principal
+The resolved caller identity on every request: a human user+role (from a Session cookie), an agent (from an API token / MCP key), or anonymous. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
 
 ### Quarantine
 Soft-flag (Redis) marking a unit as suspect. Set by Phase-8
@@ -192,6 +201,9 @@ carries it. Sharding is per-repo.
 A 16-hex-char identifier per MCP call. Surfaces in audit + logs +
 spans for end-to-end tracing.
 
+### Role
+The authorization level a User holds in an Organization via their Membership: `owner` (full control) | `admin` (manage users) | `member` (read/write) | `viewer` (read-only). Fine-grained per-repo RBAC is Phase 3.
+
 ### Runtime config
 The no-restart configuration layer (`core/config_runtime.RuntimeConfig` over
 `app_config`). The `/config` endpoints + the `/setup` wizard mutate it live;
@@ -205,6 +217,9 @@ boot failure under `STRICT_BOOTSTRAP=true`.
 ### `SCHEMA_VERSION`
 Global string in `schemas/base.py`. Bump only via a real schema
 migration. See [25](25_DESIGN_DECISIONS.md) D-11.
+
+### Session
+A server-side record created on login, bound to a browser via an httpOnly cookie. Only the SHA-256 hash of the token is stored; sessions are individually revocable and expire after `SESSION_TTL_SECONDS`. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
 
 ### Shard
 A logical partition keyed by `repo_id`. Graph + vector routers use
@@ -227,6 +242,9 @@ single-owner-per-repo. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
 A unit's logical identity:
 `SHA256(repo_id ⊕ file_path ⊕ qualified_name)`. Equal across all
 three stores. See [11](11_GRAPH_SYSTEM.md).
+
+### User
+A human account with an email address and an argon2id-hashed local password credential. Belongs to one or more Organizations via Memberships. Stored in the `users` + `user_credentials` tables.
 
 ### Version token
 Monotonic per-tenant counter (`v0`, `v1`, …) used by Phase-7

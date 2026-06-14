@@ -89,6 +89,12 @@ compatible). See **[22_SECURITY_AND_ACCESS_CONTROL](22_SECURITY_AND_ACCESS_CONTR
 | `MAX_GRAPH_TRAVERSAL_DEPTH` | `3` | 1–10 |
 | `DEFAULT_TOP_K` | `10` | 1–200 |
 
+### Human auth (Phase 1 identity)
+
+| Var | Default | Notes |
+|---|---|---|
+| `SESSION_TTL_SECONDS` | `86400` | Human browser session lifetime in seconds (24 h). After expiry the httpOnly cookie is rejected and the user must log in again. |
+
 ### MCP (Phase 5)
 
 | Var | Default | Notes |

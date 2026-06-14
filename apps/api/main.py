@@ -20,6 +20,7 @@ from apps.api.routers import (
     status,
     webhooks,
 )
+from apps.api.routers import auth as auth_router
 from apps.mcp import mcp_router
 from core import get_settings
 
@@ -60,6 +61,8 @@ def create_app() -> FastAPI:
     app.include_router(webhooks.router)
     # Onboarding Phase 1: runtime config + key management.
     app.include_router(config.router)
+    # Identity / Auth endpoints.
+    app.include_router(auth_router.router)
 
     if settings.ui_enabled:
         ui_dir = Path(__file__).resolve().parent.parent / "ui" / "static"

@@ -62,6 +62,13 @@ dependencies = [
   # Native MCP server — official protocol SDK + SSE transport helper.
   "mcp>=1.10",
   "sse-starlette>=2.1",
+
+  # Auth — password hashing + signed tokens.
+  "argon2-cffi>=23.1",
+  "itsdangerous>=2.2",
+
+  # Email validation — required by pydantic EmailStr used in auth schemas.
+  "email-validator>=2.0",
 ]
 
 [project.optional-dependencies]
