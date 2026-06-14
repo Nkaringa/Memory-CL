@@ -42,6 +42,32 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 # ---------------------------------------------------------------------------
+# Provisioning helper (shared by /register and future OIDC callback)
+# ---------------------------------------------------------------------------
+
+async def provision_user(
+    *,
+    email: str,
+    display_name: str,
+    user_repo,            # UserRepository
+    membership_repo,      # MembershipRepository
+    password_hash: str | None = None,
+) -> tuple[str, str]:
+    """Create a user + default-org membership. First-ever user becomes owner.
+    Returns (user_id, role). If password_hash is None, no local credential is set
+    (used by federated/OIDC signups)."""
+    is_bootstrap = await user_repo.count_users() == 0
+    user_id = secrets.token_urlsafe(12)
+    await user_repo.create_user(user_id=user_id, email=email, display_name=display_name)
+    if password_hash is not None:
+        await user_repo.set_password(user_id=user_id, password_hash=password_hash)
+    role = ROLE_OWNER if is_bootstrap else ROLE_MEMBER
+    membership_id = secrets.token_urlsafe(12)
+    await membership_repo.add_member(membership_id=membership_id, user_id=user_id, org_id=DEFAULT_ORG_ID, role=role)
+    return user_id, role
+
+
+# ---------------------------------------------------------------------------
 # Session creation helper
 # ---------------------------------------------------------------------------
 
@@ -110,24 +136,12 @@ async def register(
     # Ensure default org exists (idempotent).
     await org_repo.ensure_default_org()
 
-    user_id = secrets.token_urlsafe(12)
-    await user_repo.create_user(
-        user_id=user_id,
+    user_id, role = await provision_user(
         email=body.email,
         display_name=body.display_name,
-    )
-    await user_repo.set_password(
-        user_id=user_id,
+        user_repo=user_repo,
+        membership_repo=membership_repo,
         password_hash=hash_password(body.password),
-    )
-
-    role = ROLE_OWNER if is_bootstrap else ROLE_MEMBER
-    membership_id = secrets.token_urlsafe(12)
-    await membership_repo.add_member(
-        membership_id=membership_id,
-        user_id=user_id,
-        org_id=DEFAULT_ORG_ID,
-        role=role,
     )
 
     if is_bootstrap:
