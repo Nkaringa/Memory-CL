@@ -14,25 +14,40 @@ from schemas import RetrievalCandidate, RetrievalChannel
 _tracer = get_tracer("core.retrieval.metadata_retriever")
 
 
-# Plain-text scoring against the canonical Postgres store. SQLAlchemy
-# binding keeps the literal `query_text` parameterised — no string
-# interpolation, so the only attack surface is the regex-like LIKE
-# pattern, which Postgres handles natively.
-_KEYWORD_QUERY = text("""
-    SELECT unit_id, repo_id, qualified_name, kind, file_path, line_start,
-           line_end, source_sha, updated_at
-      FROM ingestion_units
-     WHERE repo_id = :repo_id
-       AND (
-            qualified_name ILIKE :pattern
-         OR name ILIKE :pattern
-         OR docstring ILIKE :pattern
-         OR signature ILIKE :pattern
-       )
-       AND (kind = ANY(:kinds) OR :no_kind_filter)
-     ORDER BY updated_at DESC, unit_id ASC
-     LIMIT :limit
-""").bindparams(bindparam("kinds", expanding=False))
+# Plain-text scoring against the canonical store. Built per-dialect:
+# Postgres uses ILIKE + `kind = ANY(:kinds)` (the byte-identical original);
+# SQLite (lite mode) uses LIKE (ASCII case-insensitive) + `kind IN :kinds`.
+# Only the literal `query_text` is bound (parameterised), so the SQL string
+# itself never carries user input.
+def _build_keyword_query(dialect: str, *, has_kinds: bool) -> Any:
+    like = "ILIKE" if dialect == "postgresql" else "LIKE"
+    kind_clause = ""
+    if has_kinds:
+        kind_clause = (
+            "AND kind = ANY(:kinds)" if dialect == "postgresql"
+            else "AND kind IN :kinds"
+        )
+    sql = text(f"""
+        SELECT unit_id, repo_id, qualified_name, kind, file_path, line_start,
+               line_end, source_sha, updated_at
+          FROM ingestion_units
+         WHERE repo_id = :repo_id
+           AND (
+                qualified_name {like} :pattern
+             OR name {like} :pattern
+             OR docstring {like} :pattern
+             OR signature {like} :pattern
+           )
+           {kind_clause}
+         ORDER BY updated_at DESC, unit_id ASC
+         LIMIT :limit
+    """)
+    if has_kinds:
+        # Postgres: array param (= ANY). SQLite: expanded IN (...).
+        sql = sql.bindparams(
+            bindparam("kinds", expanding=(dialect != "postgresql"))
+        )
+    return sql
 
 
 class MetadataRetriever:
@@ -67,16 +82,18 @@ class MetadataRetriever:
             span.set_attribute("top_k", top_k)
 
             kinds = list(unit_kinds or [])
-            params = {
+            params: dict[str, Any] = {
                 "repo_id": repo_id,
                 "pattern": f"%{query_text}%",
-                "kinds": kinds,
-                "no_kind_filter": len(kinds) == 0,
                 "limit": max(top_k, 1),
             }
+            if kinds:
+                params["kinds"] = kinds
+            dialect = getattr(getattr(self._engine, "dialect", None), "name", None)
+            query = _build_keyword_query(dialect or "postgresql", has_kinds=bool(kinds))
             try:
                 async with self._engine.connect() as conn:
-                    result = await conn.execute(_KEYWORD_QUERY, params)
+                    result = await conn.execute(query, params)
                     rows = result.all()
             except Exception as exc:
                 emit_phase4_event(
@@ -93,7 +110,7 @@ class MetadataRetriever:
 
             candidates: list[RetrievalCandidate] = []
             for row in rows:
-                m = row._mapping if hasattr(row, "_mapping") else row
+                m: Any = row._mapping if hasattr(row, "_mapping") else row
                 # Metadata raw_score is a uniform 0.5 — the exact match
                 # already happened in SQL, ranking adds the per-feature
                 # weights downstream (recency, importance, semantic).

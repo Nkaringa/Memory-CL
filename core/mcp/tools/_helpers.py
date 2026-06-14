@@ -13,6 +13,8 @@ matches). Everything here is read-only composition over Phase 2-4.
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from typing import Any
 
 from core.context import ContextAssembler
@@ -82,6 +84,21 @@ def escape_like(query: str) -> str:
     return query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _arr(v: Any) -> list[str]:
+    """Array column tolerant of both backends: Postgres TEXT[] arrives as a
+    list; lite/SQLite stores it as a JSON string."""
+    if isinstance(v, str):
+        return json.loads(v) if v else []
+    return list(v or [])
+
+
+def _ts(v: Any) -> Any:
+    """Timestamp column: Postgres gives a datetime; SQLite gives ISO TEXT."""
+    if isinstance(v, str):
+        return datetime.fromisoformat(v)
+    return v
+
+
 def hydrate_unit(mapping: Any) -> IngestionUnit:
     """Hydrate an IngestionUnit from a SQLAlchemy row / row mapping."""
     m = mapping._mapping if hasattr(mapping, "_mapping") else mapping
@@ -101,14 +118,14 @@ def hydrate_unit(mapping: Any) -> IngestionUnit:
         source_sha=m["source_sha"],
         docstring=m["docstring"],
         signature=m["signature"],
-        imports=list(m["imports"] or []),
-        calls=list(m["calls"] or []),
-        references=list(m["references"] or []),
-        bases=list(m["bases"] or []),
+        imports=_arr(m["imports"]),
+        calls=_arr(m["calls"]),
+        references=_arr(m["references"]),
+        bases=_arr(m["bases"]),
         token_count=m["token_count"],
         schema_version=m["schema_version"],
-        created_at=m["created_at"],
-        updated_at=m["updated_at"],
+        created_at=_ts(m["created_at"]),
+        updated_at=_ts(m["updated_at"]),
         source=m["source"],
         checksum=m["checksum"],
     )
