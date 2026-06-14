@@ -23,12 +23,14 @@ from storage.repositories import (
     QnameMatch,
     RepoSummary,
     SessionRepository,
+    TeamRepository,
     UserRepository,
     VectorHit,
     VectorPoint,
     VectorRepository,
 )
 from storage.session_repo import PostgresSessionRepository, SessionRow
+from storage.team_repo import PostgresTeamRepository, TeamRow
 from storage.user_repo import PostgresUserRepository, UserRow
 
 __all__ = [
@@ -70,6 +72,9 @@ __all__ = [
     "SessionRow",
     "StorageClient",
     "StorageHealth",
+    "TeamRepository",
+    "TeamRow",
+    "PostgresTeamRepository",
     "UserRepository",
     "UserRow",
     "VectorHit",
