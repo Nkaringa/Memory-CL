@@ -281,6 +281,53 @@ async def _cmd_repos(
     return render.render_repos(ui, res)
 
 
+async def _cmd_freshness(
+    client: AsyncMemoryClient, args: argparse.Namespace, ui: UI,
+    settings: CliSettings,
+) -> int:
+    cmd = getattr(args, "freshness_cmd", None) or "status"
+    if cmd == "add":
+        res = await client.add_managed_repo(
+            remote_url=args.url, branch=args.branch, repo_id=args.id,
+        )
+        if _json_mode(args):
+            _emit(res)
+            return 0
+        ui.out.print(
+            f"[green]✓[/green] added managed repo [bold]{res['repo_id']}[/bold] "
+            f"@ {(res.get('commit_sha') or '?')[:12]} — kept fresh by polling"
+        )
+        return 0
+    if cmd in ("pause", "resume"):
+        await client.set_freshness_watch(repo_id=args.repo_id, enabled=(cmd == "resume"))
+        if _json_mode(args):
+            _emit({"repo_id": args.repo_id, "watch_enabled": cmd == "resume"})
+            return 0
+        ui.out.print(f"[green]✓[/green] {cmd}d freshness for [bold]{args.repo_id}[/bold]")
+        return 0
+    if cmd == "sync":
+        res = await client.sync_freshness(repo_id=args.repo_id)
+        if _json_mode(args):
+            _emit(res)
+            return 0
+        word = "re-ingested" if res.get("changed") else "already up to date"
+        ui.out.print(f"[green]✓[/green] {args.repo_id}: {word}")
+        return 0
+    if cmd == "remove":
+        await client.remove_freshness(repo_id=args.repo_id)
+        if _json_mode(args):
+            _emit({"repo_id": args.repo_id, "removed": True})
+            return 0
+        ui.out.print(f"[green]✓[/green] removed [bold]{args.repo_id}[/bold] from freshness")
+        return 0
+    # default: status table
+    data = await client.get_freshness()
+    if _json_mode(args):
+        _emit(data)
+        return 0
+    return render.render_freshness(ui, data)
+
+
 async def _cmd_search(
     client: AsyncMemoryClient, args: argparse.Namespace, ui: UI,
     settings: CliSettings,
@@ -887,6 +934,29 @@ def build_parser() -> argparse.ArgumentParser:
         "repos", parents=[common], help="list ingested repositories",
     )
     p_repos.set_defaults(func=_cmd_repos)
+
+    p_fresh = sub.add_parser(
+        "freshness", parents=[common],
+        help="auto-reingest status + control (managed repos, watcher)",
+    )
+    fresh_sub = p_fresh.add_subparsers(dest="freshness_cmd", metavar="<subcommand>")
+    pf_add = fresh_sub.add_parser(
+        "add", parents=[common], help="add a managed git repo (clone + keep fresh)",
+    )
+    pf_add.add_argument("url", help="git remote URL (https or git@)")
+    pf_add.add_argument("--branch", default=None, help="branch to track (default: repo default)")
+    pf_add.add_argument("--id", default=None, help="override repo_id (default: derived from URL)")
+    pf_add.set_defaults(func=_cmd_freshness)
+    for name, helptext in (
+        ("sync", "force a freshness check now"),
+        ("pause", "pause auto-reingest for a repo"),
+        ("resume", "resume auto-reingest for a repo"),
+        ("remove", "deregister a repo (delete a managed clone)"),
+    ):
+        pf = fresh_sub.add_parser(name, parents=[common], help=helptext)
+        pf.add_argument("repo_id", help="repo id")
+        pf.set_defaults(func=_cmd_freshness)
+    p_fresh.set_defaults(func=_cmd_freshness)
 
     p_search = sub.add_parser(
         "search", parents=[common],

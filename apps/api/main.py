@@ -11,6 +11,7 @@ from apps.api.middleware import RequestContextMiddleware
 from apps.api.routers import (
     audit,
     config,
+    freshness,
     health,
     ingest,
     repos,
@@ -54,6 +55,7 @@ def create_app() -> FastAPI:
     app.include_router(audit.router)
     app.include_router(status.router)
     app.include_router(repos.router)
+    app.include_router(freshness.router)
     # Onboarding Phase 1: runtime config + key management.
     app.include_router(config.router)
 

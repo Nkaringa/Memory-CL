@@ -6,7 +6,13 @@ from fastapi import Depends, Request
 
 from apps.api.state import AppState
 from core.config_runtime import RuntimeConfig
-from storage import Neo4jClient, PostgresClient, QdrantStorageClient, RedisClient
+from storage import (
+    Neo4jClient,
+    PostgresClient,
+    QdrantStorageClient,
+    RedisClient,
+    RepoRegistryRepository,
+)
 
 
 def get_app_state(request: Request) -> AppState:
@@ -54,7 +60,17 @@ def get_redis(state: AppStateDep) -> RedisClient:
     return state.redis
 
 
+def get_repo_registry(request: Request) -> RepoRegistryRepository:
+    """The Phase-3 freshness repo registry attached during lifespan."""
+    registry = getattr(request.app.state, "repo_registry", None)
+    if registry is None:
+        raise RuntimeError("RepoRegistryRepository not initialized — lifespan did not run")
+    assert isinstance(registry, RepoRegistryRepository)
+    return registry
+
+
 PostgresDep = Annotated[PostgresClient, Depends(get_postgres)]
 QdrantDep = Annotated[QdrantStorageClient, Depends(get_qdrant)]
 Neo4jDep = Annotated[Neo4jClient, Depends(get_neo4j)]
 RedisDep = Annotated[RedisClient, Depends(get_redis)]
+RepoRegistryDep = Annotated[RepoRegistryRepository, Depends(get_repo_registry)]
