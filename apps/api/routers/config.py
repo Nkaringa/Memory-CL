@@ -29,11 +29,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.auth_deps import SoftPrincipalDep
-from apps.api.dependencies import AppStateDep, RuntimeConfigDep, TokenCacheDep
+from apps.api.dependencies import AppStateDep, AuthProviderRepoDep, OAuthRegistryDep, RuntimeConfigDep, TokenCacheDep
 from apps.api.embedding_runtime import reindex_repo
 from apps.mcp.auth import _extract_api_key
 from core import get_logger, get_settings
 from core.auth import Principal
+from core.auth.providers import normalize_provider_type
+from schemas.auth_providers import EnableRequest, ProviderCreate, ProviderListResponse, ProviderUpdate, ProviderView
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -444,3 +446,152 @@ async def revoke_token(
         )
     await tokens.refresh()
     return OkResponse()
+
+
+# ---------------------------------------------------------------------------
+# OAuth / OIDC provider admin CRUD
+# ---------------------------------------------------------------------------
+
+def _provider_view(row) -> ProviderView:
+    """Map an AuthProviderRow to a ProviderView (secrets masked)."""
+    return ProviderView(
+        id=row.id,
+        provider_type=row.provider_type,
+        display_name=row.display_name,
+        client_id=row.client_id,
+        has_secret=bool(row.client_secret),
+        discovery_url=row.discovery_url,
+        scopes=row.scopes,
+        enabled=row.enabled,
+    )
+
+
+@router.post("/auth/providers", response_model=ProviderView)
+async def create_auth_provider(
+    body: ProviderCreate,
+    runtime: RuntimeConfigDep,
+    api_key: _SoftApiKeyDep,
+    principal: SoftPrincipalDep,
+    repo: AuthProviderRepoDep,
+    registry: OAuthRegistryDep,
+) -> ProviderView:
+    """Create an identity provider (created DISABLED). Bootstrap-or-authed.
+
+    Returns the new provider view (secrets masked). The OAuthRegistry is
+    rebuilt from the enabled list so changes take effect immediately.
+    """
+    _require_bootstrap_or_authed(runtime, api_key, principal)
+    try:
+        pt = normalize_provider_type(body.provider_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    pid = secrets.token_urlsafe(8)
+    row = await repo.create(
+        id=pid,
+        provider_type=pt,
+        display_name=body.display_name,
+        client_id=body.client_id,
+        client_secret=body.client_secret,
+        discovery_url=body.discovery_url,
+        scopes=body.scopes,
+        enabled=False,
+    )
+    registry.rebuild(await repo.list_enabled())
+    return _provider_view(row)
+
+
+@router.get("/auth/providers", response_model=ProviderListResponse)
+async def list_auth_providers(
+    runtime: RuntimeConfigDep,
+    api_key: _SoftApiKeyDep,
+    principal: SoftPrincipalDep,
+    repo: AuthProviderRepoDep,
+) -> ProviderListResponse:
+    """List all configured providers (secrets masked). Bootstrap-or-authed."""
+    _require_bootstrap_or_authed(runtime, api_key, principal)
+    rows = await repo.list_all()
+    return ProviderListResponse(providers=[_provider_view(r) for r in rows])
+
+
+@router.patch("/auth/providers/{pid}", response_model=ProviderView)
+async def update_auth_provider(
+    pid: str,
+    body: ProviderUpdate,
+    runtime: RuntimeConfigDep,
+    api_key: _SoftApiKeyDep,
+    principal: SoftPrincipalDep,
+    repo: AuthProviderRepoDep,
+    registry: OAuthRegistryDep,
+) -> ProviderView:
+    """Update a provider's configuration. Bootstrap-or-authed.
+
+    Rebuilds the OAuthRegistry so changes to enabled providers take effect
+    immediately without a restart.
+    """
+    _require_bootstrap_or_authed(runtime, api_key, principal)
+    if await repo.get(pid) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider not found")
+    row = await repo.update(
+        id=pid,
+        display_name=body.display_name,
+        client_id=body.client_id,
+        client_secret=body.client_secret,
+        discovery_url=body.discovery_url,
+        scopes=body.scopes,
+    )
+    registry.rebuild(await repo.list_enabled())
+    return _provider_view(row)
+
+
+@router.post("/auth/providers/{pid}/enable", response_model=ProviderView)
+async def set_auth_provider_enabled(
+    pid: str,
+    body: EnableRequest,
+    runtime: RuntimeConfigDep,
+    api_key: _SoftApiKeyDep,
+    principal: SoftPrincipalDep,
+    repo: AuthProviderRepoDep,
+    registry: OAuthRegistryDep,
+) -> ProviderView:
+    """Enable or disable a provider. Bootstrap-or-authed.
+
+    When enabling, verifies the OAuthRegistry accepted the config. If
+    `registry.client_for(pid)` is None after rebuild the provider config is
+    invalid and a 400 is returned.
+    """
+    _require_bootstrap_or_authed(runtime, api_key, principal)
+    row = await repo.get(pid)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider not found")
+    await repo.set_enabled(id=pid, enabled=body.enabled)
+    registry.rebuild(await repo.list_enabled())
+    if body.enabled and registry.client_for(pid) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="provider configuration is invalid",
+        )
+    updated = await repo.get(pid)
+    assert updated is not None
+    return _provider_view(updated)
+
+
+@router.delete("/auth/providers/{pid}")
+async def delete_auth_provider(
+    pid: str,
+    runtime: RuntimeConfigDep,
+    api_key: _SoftApiKeyDep,
+    principal: SoftPrincipalDep,
+    repo: AuthProviderRepoDep,
+    registry: OAuthRegistryDep,
+) -> dict:
+    """Delete a provider. Bootstrap-or-authed.
+
+    Rebuilds the OAuthRegistry so the removed provider is de-registered
+    immediately.
+    """
+    _require_bootstrap_or_authed(runtime, api_key, principal)
+    if await repo.get(pid) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="provider not found")
+    await repo.delete(pid)
+    registry.rebuild(await repo.list_enabled())
+    return {"ok": True}
