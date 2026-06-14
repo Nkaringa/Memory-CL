@@ -38,6 +38,9 @@ from storage import (
 )
 from storage.auth_provider_repo import PostgresAuthProviderRepository
 from storage.federated_identity_repo import PostgresFederatedIdentityRepository
+from storage.team_repo import PostgresTeamRepository
+from storage.repo_grant_repo import PostgresRepoGrantRepository
+from storage.invitation_repo import PostgresInvitationRepository
 
 _log = get_logger(__name__)
 
@@ -117,6 +120,10 @@ def _build_state() -> tuple[
         # Federation repos (Task 5)
         auth_provider_repo=PostgresAuthProviderRepository(engine_proxy(pg)),
         federated_identity_repo=PostgresFederatedIdentityRepository(engine_proxy(pg)),
+        # RBAC repos (Task 6)
+        team_repo=PostgresTeamRepository(engine_proxy(pg)),
+        repo_grant_repo=PostgresRepoGrantRepository(engine_proxy(pg)),
+        invitation_repo=PostgresInvitationRepository(engine_proxy(pg)),
     )
     return state, app_config_repo, repo_registry, runtime, token_cache
 
@@ -133,6 +140,9 @@ def _build_lite_state(settings: Settings) -> tuple[
     from storage.lite.api_token_repo import SqliteApiTokenRepository
     from storage.lite.app_config_repo import SqliteAppConfigRepository
     from storage.lite.auth_provider_repo import SqliteAuthProviderRepository
+    from storage.lite.team_repo import SqliteTeamRepository
+    from storage.lite.repo_grant_repo import SqliteRepoGrantRepository
+    from storage.lite.invitation_repo import SqliteInvitationRepository
     from storage.lite.clients import (
         LiteNeo4jClient,
         LiteSqliteClient,
@@ -179,6 +189,10 @@ def _build_lite_state(settings: Settings) -> tuple[
         # Federation repos (Task 5)
         "auth_provider_repo": SqliteAuthProviderRepository(engine),
         "federated_identity_repo": SqliteFederatedIdentityRepository(engine),
+        # RBAC repos (Task 6)
+        "team_repo": SqliteTeamRepository(engine),
+        "repo_grant_repo": SqliteRepoGrantRepository(engine),
+        "invitation_repo": SqliteInvitationRepository(engine),
     }
     state = AppState.with_default_embedder(**state_kwargs)
     _log.info("lite_mode_state_built", data_dir=str(data_dir))
@@ -337,6 +351,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await state.auth_provider_repo.ensure_schema()
         if state.federated_identity_repo is not None:
             await state.federated_identity_repo.ensure_schema()
+        if state.team_repo is not None:
+            await state.team_repo.ensure_schema()
+        if state.repo_grant_repo is not None:
+            await state.repo_grant_repo.ensure_schema()
+        if state.invitation_repo is not None:
+            await state.invitation_repo.ensure_schema()
         from core.auth.oauth_registry import OAuthRegistry
         reg = OAuthRegistry()
         reg.rebuild(await state.auth_provider_repo.list_enabled() if state.auth_provider_repo is not None else [])  # type: ignore[arg-type]
