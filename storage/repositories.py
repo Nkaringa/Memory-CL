@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from schemas import GraphEdge, GraphNode, IngestionUnit
+
+if TYPE_CHECKING:
+    from storage.org_repo import OrgRow
 
 
 # ---------------------------------------------------------------------------
@@ -186,3 +189,16 @@ class VectorRepository(Protocol):
     async def delete_points_for_file(
         self, collection: str, repo_id: str, file_path: str
     ) -> int: ...
+
+
+# ---------------------------------------------------------------------------
+# Organizations — durable tenant boundary
+# ---------------------------------------------------------------------------
+@runtime_checkable
+class OrgRepository(Protocol):
+    async def ensure_schema(self) -> None: ...
+    async def create_org(self, *, org_id: str, name: str, slug: str) -> "OrgRow": ...
+    async def get_org(self, org_id: str) -> "OrgRow | None": ...
+    async def get_org_by_slug(self, slug: str) -> "OrgRow | None": ...
+    async def list_orgs(self) -> "list[OrgRow]": ...
+    async def ensure_default_org(self) -> "OrgRow": ...
