@@ -241,6 +241,29 @@ mismatches the key.
 
 ---
 
+## Human auth — federated login (Phase 2)
+
+`apps/api/routers/auth_oauth.py`. Handles the OAuth / OIDC browser flow and
+returns a `memcl_session` cookie on success.
+
+| Method · path | Auth required | Notes |
+|---|---|---|
+| `GET /auth/providers` | Public | Returns the list of **enabled** providers for login-button rendering. Never exposes secrets. |
+| `GET /auth/oauth/{provider_id}/start` | None | Redirects browser to the upstream provider; sets the `memcl_oauth` handshake cookie (state + PKCE + nonce). |
+| `GET /auth/oauth/{provider_id}/callback` | None (browser redirect) | Validates state/PKCE/nonce; links or creates account; sets `memcl_session` and redirects to UI. Returns 400 if the provider supplies an unverified email. |
+
+`apps/api/routers/config.py` (admin panel — OAuth provider management):
+
+| Method · path | Auth required | Notes |
+|---|---|---|
+| `POST /config/auth/providers` | Admin / bootstrap-open | Create a provider (disabled by default). Body: `{type, provider_id, client_id, client_secret, scopes, discovery_url}`. |
+| `GET /config/auth/providers` | Admin / bootstrap-open | List all providers (masked — `client_secret` shown as `has_secret: bool`). |
+| `PATCH /config/auth/providers/{id}` | Admin / bootstrap-open | Update client-id, secret, scopes, or discovery URL. |
+| `POST /config/auth/providers/{id}/enable` | Admin / bootstrap-open | Enable (or disable) a provider. Toggle after registering the callback URL at the upstream IdP. |
+| `DELETE /config/auth/providers/{id}` | Admin / bootstrap-open | Delete a provider and its federated identities. |
+
+---
+
 ## Config + onboarding (runtime, no restart)
 
 `apps/api/routers/config.py`. All read state from / write to `app_config`

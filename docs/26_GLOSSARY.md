@@ -7,6 +7,13 @@ isn't defined here, please add it.
 
 ---
 
+### Account linking
+The process of connecting a federated (OAuth/OIDC) identity to an existing
+Memory-CL user account. Linking is done by **verified email**: if the upstream
+provider's verified email matches a user already in the system, the new
+`federated_identities` row is attached to that user — no new account is created.
+Providers that supply an unverified email are refused. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
+
 ### API token
 A named, revocable authentication credential (the `api_tokens` table). Issue
 many — one per agent/machine — and revoke any individually without rotating
@@ -104,6 +111,12 @@ The embedding provider choice: `openai` (text-embedding-3-small, 1536-dim,
 needs a key) or `local` (on-device fastembed bge-small, 384-dim, no key).
 Set at runtime via `POST /config/embedding-mode`; switching rebuilds + re-embeds.
 
+### Federated identity
+A user account binding to an external identity provider (GitHub, Google,
+Microsoft, or generic OIDC). Stored in the `federated_identities` table as a
+`(provider_id, subject)` pair linked to a Memory-CL User. A single user can
+have multiple federated identities (one per provider). See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
+
 ### Freshness
 Auto-reingest so the memory tracks the code. A filesystem **watcher** keeps
 local (mounted) repos fresh; **polling** keeps managed (git-URL) repos fresh; a
@@ -166,6 +179,12 @@ nodes. EXTERNAL nodes use `external:<qname>`. See [11](11_GRAPH_SYSTEM.md).
 ### Organization
 The top-level tenant boundary for human users. Every User belongs to at least one Organization via a Membership. Stored in the `organizations` table.
 
+### OIDC provider
+An OAuth 2.0 / OpenID Connect identity provider configured in Memory-CL via
+Settings → Identity. Built-in presets: GitHub, Google, Microsoft. Custom issuers
+supply a `discovery_url` for `.well-known/openid-configuration` auto-discovery.
+Managed via `/config/auth/providers`. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
+
 ### Phase
 A discrete vertical slice of the engine. Phases 1–10 stack additively;
 each ends with a green test gate.
@@ -177,6 +196,13 @@ See [12](12_EMBEDDINGS_AND_COMPRESSION.md).
 ### Policy engine
 Phase-8's deterministic rules engine. Predicates return `ALLOW |
 DENY | NEUTRAL`; first non-NEUTRAL wins. See [16](16_AUDIT_AND_GOVERNANCE.md).
+
+### PKCE (Proof Key for Code Exchange)
+An OAuth 2.0 security extension (RFC 7636) that prevents authorization-code
+interception attacks. Memory-CL uses S256: a random `code_verifier` is generated
+at `/auth/oauth/{id}/start`, its SHA-256 hash (`code_challenge`) is sent to the
+provider, and the raw verifier is returned at callback — the provider verifies the
+pair. The verifier is carried in the `memcl_oauth` handshake cookie (never the URL).
 
 ### Principal
 The resolved caller identity on every request: a human user+role (from a Session cookie), an agent (from an API token / MCP key), or anonymous. See [22](22_SECURITY_AND_ACCESS_CONTROL.md).
